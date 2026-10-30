@@ -1,0 +1,151 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: Secrets & Security Scan
+  # --------------------------------------------------------------------------
+  security-secrets-scan:
+    name: Secrets Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Detector
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------------------------
+  # Job 2: Code Quality & Linting
+  # --------------------------------------------------------------------------
+  lint-and-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python Dependencies
+        run: uv sync --all-groups
+
+      - name: Run Pyright (Strict Mode)
+        run: uv run pyright
+
+      - name: Set up Rust & Clippy
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Run Cargo Clippy
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Set up Go
+        if: hashFiles('go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run Go Vet
+        if: hashFiles('go.mod') != ''
+        run: go vet ./...
+
+  # --------------------------------------------------------------------------
+  # Job 3: Financial Golden Tests (Mandatory Blocking Gate)
+  # --------------------------------------------------------------------------
+  financial-golden-tests:
+    name: Financial Golden Tests (Deterministic)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python Dependencies
+        run: uv sync --all-groups
+
+      - name: Execute Deterministic Financial Golden Tests
+        run: uv run pytest tests/ -v -m "golden or not integration"
+
+  # --------------------------------------------------------------------------
+  # Job 4: Rust & Go Unit Tests
+  # --------------------------------------------------------------------------
+  core-engines-test:
+    name: Rust & Go Core Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Cargo Test
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        run: cargo test --all --verbose
+
+      - name: Set up Go
+        if: hashFiles('go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run Go Tests
+        if: hashFiles('go.mod') != ''
+        run: go test -v -race ./...
+
+  # --------------------------------------------------------------------------
+  # Job 5: MetaTrader 5 Windows Integration Suite
+  # --------------------------------------------------------------------------
+  mt5-windows-suite:
+    name: MT5 Windows Integration Suite
+    runs-on: windows-latest
+    needs: [lint-and-typecheck, financial-golden-tests]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12 (Win32 Native)
+        run: uv python install 3.12
+
+      - name: Install Dependencies
+        run: uv sync --all-groups
+
+      - name: Run MT5 Execution Tests (Mock / Offline Terminal Tests)
+        run: |
+          uv run pytest tests/ -v -k "mt5 or execution or telegram"

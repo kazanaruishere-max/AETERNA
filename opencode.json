@@ -1,0 +1,50 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "9router/deepreasoning",
+  "default_agent": "aeterna-lead",
+  "instructions": [
+    "docs/AGENTS.local.md",
+    "docs/aeterna/agent-contract.md",
+    "docs/aeterna/invariant-cheatsheet.md"
+  ],
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "skill": {
+      "*": "deny",
+      "aeterna-*": "allow",
+      "omp-task-protocol": "allow",
+      "handoff": "allow"
+    }
+  },
+  "command": {
+    "aeterna-plan": {
+      "description": "Create architectural and module implementation plans for AETERNA Quant",
+      "template": "{file:.opencode/commands/aeterna-plan.md}\n\n$ARGUMENTS",
+      "agent": "aeterna-architect",
+      "subtask": true
+    },
+    "aeterna-task": {
+      "description": "Generate self-contained OMP task packet in .handoff/tasks/",
+      "template": "{file:.opencode/commands/aeterna-task.md}\n\n$ARGUMENTS",
+      "agent": "aeterna-briefer",
+      "subtask": true
+    },
+    "aeterna-verify": {
+      "description": "Execute deterministic test suites, clean code linters, and milestone gate audits",
+      "template": "{file:.opencode/commands/aeterna-verify.md}\n\n$ARGUMENTS",
+      "agent": "aeterna-verifier",
+      "subtask": true
+    },
+    "aeterna-handoff": {
+      "description": "Record session state, milestone progress, and risks to .handoff/latest.md",
+      "template": "{file:.opencode/commands/aeterna-handoff.md}\n\n$ARGUMENTS"
+    },
+    "aeterna-refactor": {
+      "description": "Create behavior-preserving refactor task packet with characterization tests",
+      "template": "{file:.opencode/commands/aeterna-refactor.md}\n\n$ARGUMENTS",
+      "agent": "aeterna-architect",
+      "subtask": true
+    }
+  }
+}

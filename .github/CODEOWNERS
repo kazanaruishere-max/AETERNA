@@ -1,0 +1,23 @@
+# ====================================================================
+# CODEOWNERS - Safety-Critical Path Approval Gate
+# PR yang menyentuh direktori/file berikut WAJIB approval manual sebelum merge.
+# Auto-merge dilarang keras untuk area proteksi modal dan parameter risiko.
+# ====================================================================
+
+# 1. Risk Gate & Watchdog (Sizing 0.5%, Circuit Breaker, Hard Killswitch 10%)
+engine/risk_gate/                          *
+
+# 2. State Machine (News Blackout, Spread EWMA Z-Score, PAUSED/NORMAL State)
+engine/state_machine/                      *
+
+# 3. Rust High-Performance Engine (Feature Engineering & Backtest Math)
+engine/analysis_engine/rust/               *
+
+# 4. Broker Execution Bridge (MT5 OrderSend, Server-Side SL/TP Attachment)
+engine/execution/                          *
+
+# 5. Telegram Control Panel (Manual Override, Emergency Stop Handler)
+engine/telegram_bot/                       *
+
+# 6. Financial Configuration (Parameter numerik risiko, lot floor, timeframe)
+instruments/xauusd/config/parameters.yaml  *

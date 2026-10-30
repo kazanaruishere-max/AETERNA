@@ -1,0 +1,53 @@
+[project]
+name = "aeterna-quant"
+version = "0.1.0"
+description = "Deterministic Quantitative Trading Engine for XAUUSD"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Macro economic indicators & release calendar (FRED API: CPI, NFP, GDP, PCE, TIPS 10Y real yield, DXY proxy)
+    # Catatan audit: Finnhub & FMP dieliminasi karena kalender makro dikunci di balik paywall (Finnhub Premium & FMP HTTP 402)
+    "fredapi>=0.5.2",
+    "requests>=2.32.0",
+    "pydantic>=2.8.0",
+    "pyyaml>=6.0.1",
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    # Live inference on CPU (Kronos ONNX Runtime)
+    "onnxruntime>=1.18.0",
+    # Broker execution (Windows native environment)
+    # MetaTrader5 package is installed in Windows execution environment
+]
+
+# STRICT CONSTRAINT:
+# DILARANG menambahkan library third-party price provider:
+# yfinance, twelvedata, polygon-api-client, ib_insync, alpaca-trade-api,
+# tradier, marketstack, tiingo.
+# Seluruh data harga XAUUSD (M1 OHLCV, tick volume, streaming quote)
+# 100% dipasok oleh OANDA v20 REST (scanning) dan Exness MT5 (eksekusi).
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pyright>=1.1.370",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine", "instruments"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["engine", "instruments", "tests"]
+exclude = [".worktrees", "data", "**/__pycache__"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_default_fixture_loop_scope = "function"
