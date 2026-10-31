@@ -13,6 +13,10 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/state_machine/` | Evaluasi status trading berbasis EWMA spread & jadwal news | `aeterna-risk` | OMP | A | `TEST-RSK-001`, `TEST-RSK-002` |
 | `engine/risk_gate/` | Watchdog independen Go: evaluasi limit risiko & killswitch | `aeterna-risk` | OMP | A | `GATE-M4-HUMAN` |
 | `engine/analysis_engine/rust/` | Engine backtest & kalkulasi kuantitatif performa tinggi | `aeterna-backtest` | OMP | B | `cargo test --all` |
+| `engine/analysis_engine/rust/src/py_bindings.rs` | PyO3 C-Extension FFI bindings & type converters | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
+| `engine/analysis_engine/python/loader.py` | SQLite candle loader (M1 time-series query via `pair`) | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
+| `engine/analysis_engine/python/runner.py` | Python backtest orchestrator facade & report builder | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
+| `engine/analysis_engine/python/types.py` | TypedDict & dataclass definitions for Python backtest | `aeterna-backtest` | OMP | B | `pyright` strict pass |
 | `engine/analysis_engine/python/` | Wrapper PyO3, regime Kronos ONNX runtime, strategy pool | `aeterna-strategy` | OMP | B | `pytest tests/analysis/` |
 | `engine/execution/` | Bridge MT5 Exness, server-side SL/TP, order lifecycle | `aeterna-execution` | OMP | A | `GATE-M5-HUMAN` |
 | `engine/telegram_bot/` | Interface admin, notifikasi alert, inline control 2-step | `aeterna-execution` | OMP | A | `TEST-TEL-*` |
