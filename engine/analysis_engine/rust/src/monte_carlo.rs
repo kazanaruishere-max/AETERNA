@@ -2,41 +2,18 @@
 //!
 //! Provides deterministic trade sequence shuffling over 1,000 iterations to evaluate
 //! drawdown percentiles and risk of ruin against the 10.0% project killswitch threshold.
+//!
+//! Uses audited `rand_xoshiro::Xoshiro256StarStar` with `rand::seq::SliceRandom`
+//! (unbiased Lemire reduction algorithm) to eliminate any modulo bias (ASUMSI-M2-06).
+
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256StarStar;
 
 use crate::types::{EngineError, MonteCarloResult, PnlResult};
 
-/// Deterministic 64-bit Xorshift64* PRNG for reproducible Monte Carlo trade sequence shuffling.
-struct Xorshift64Star {
-    state: u64,
-}
-
-impl Xorshift64Star {
-    fn new(seed: u64) -> Self {
-        // Guarantee non-zero internal state
-        let state = if seed == 0 {
-            0x4D59_5354_4943_5F31
-        } else {
-            seed
-        };
-        Self { state }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.state = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    fn next_usize(&mut self, bound: usize) -> usize {
-        if bound <= 1 {
-            return 0;
-        }
-        (self.next_u64() % (bound as u64)) as usize
-    }
-}
+/// Default deterministic seed for reproducible Monte Carlo simulation.
+pub const DEFAULT_MC_SEED: u64 = 0x4D59_5354_4943_5F31;
 
 /// Runs a deterministic Trade Sequence Shuffling Monte Carlo analysis.
 ///
@@ -64,19 +41,14 @@ pub fn run_monte_carlo(
         ));
     }
 
-    let seed_val = seed.unwrap_or(0x4D59_5354_4943_5F31);
-    let mut rng = Xorshift64Star::new(seed_val);
+    let seed_val = seed.unwrap_or(DEFAULT_MC_SEED);
+    let mut rng = Xoshiro256StarStar::seed_from_u64(seed_val);
 
     let mut max_dd_list = Vec::with_capacity(iterations);
 
     for _ in 0..iterations {
         let mut shuffled = trades.to_vec();
-
-        // Fisher-Yates shuffle
-        for i in (1..shuffled.len()).rev() {
-            let j = rng.next_usize(i + 1);
-            shuffled.swap(i, j);
-        }
+        shuffled.shuffle(&mut rng);
 
         // Simulate equity curve
         let mut equity = initial_equity;
