@@ -26,6 +26,9 @@ pub struct BacktestConfig {
     pub leverage: f64,
     pub stop_level_points: f64,
     pub slippage_free_points: f64,
+    /// Default broker spread in points (e.g. 20.0 points = $0.20 USD = 2.0 pips baseline for Exness Standard XAUUSD).
+    /// Used when per-candle spread is unavailable (ASUMSI-M2-07).
+    pub default_spread_points: f64,
 }
 
 impl Default for BacktestConfig {
@@ -37,6 +40,7 @@ impl Default for BacktestConfig {
             leverage: 200.0,
             stop_level_points: 300.0,
             slippage_free_points: 15.0,
+            default_spread_points: 20.0,
         }
     }
 }

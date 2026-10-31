@@ -3,8 +3,12 @@
 //! Provides step-by-step chronological simulation per M1 candle, managing active
 //! positions, checking SL/TP with broker slippage rules, and aggregating performance metrics.
 
+use chrono::{Datelike, NaiveDate, Timelike, Weekday};
+
 use crate::audit::create_audit_record;
-use crate::exness_rules::{apply_slippage_free_range, validate_order_stop_level};
+use crate::exness_rules::{
+    apply_slippage_free_range, apply_weekly_gap_rule, validate_order_stop_level,
+};
 use crate::pnl::calculate_margin;
 use crate::types::{
     BacktestConfig, BacktestSummary, Candle, Direction, EngineError, ExecutionAuditRecord,
@@ -16,6 +20,7 @@ use crate::types::{
 struct ActivePosition {
     order: Order,
     entry_exec: ExecutionPriceResult,
+    spread_usd: f64,
 }
 
 /// Validates whether a [`Candle`] satisfies price consistency and positive/finite rules.
@@ -39,6 +44,101 @@ fn validate_candle(candle: &Candle) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// Helper function to find the day of the month for the N-th Sunday (1-based index).
+fn find_nth_sunday(year: i32, month: u32, n: u32) -> u32 {
+    let mut count = 0;
+    for day in 1..=31 {
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            if date.weekday() == Weekday::Sun {
+                count += 1;
+                if count == n {
+                    return day;
+                }
+            }
+        }
+    }
+    if n == 1 {
+        1
+    } else {
+        8
+    }
+}
+
+/// Determines whether a given UTC timestamp falls within US Daylight Saving Time (EDT, UTC-4).
+///
+/// Under the US Energy Policy Act of 2005:
+/// - Starts: Second Sunday in March at 02:00 EST (07:00 UTC).
+/// - Ends: First Sunday in November at 02:00 EDT (06:00 UTC).
+pub fn is_us_daylight_saving(dt: &chrono::DateTime<chrono::FixedOffset>) -> bool {
+    let year = dt.year();
+    let month = dt.month();
+
+    if !(3..=11).contains(&month) {
+        return false;
+    }
+    if (4..=10).contains(&month) {
+        return true;
+    }
+
+    if month == 3 {
+        let second_sunday_day = find_nth_sunday(year, 3, 2);
+        if let Some(trans_date) = NaiveDate::from_ymd_opt(year, 3, second_sunday_day) {
+            if let Some(trans_dt) = trans_date.and_hms_opt(7, 0, 0) {
+                return dt.naive_utc() >= trans_dt;
+            }
+        }
+        false
+    } else {
+        // month == 11
+        let first_sunday_day = find_nth_sunday(year, 11, 1);
+        if let Some(trans_date) = NaiveDate::from_ymd_opt(year, 11, first_sunday_day) {
+            if let Some(trans_dt) = trans_date.and_hms_opt(6, 0, 0) {
+                return dt.naive_utc() < trans_dt;
+            }
+        }
+        false
+    }
+}
+
+/// Calculates hours elapsed since the weekly market open with dynamic US DST adjustment.
+///
+/// Exness market opens on Sunday afternoon:
+/// - Summer (US Daylight Saving Time / EDT): Sunday 21:00 UTC
+/// - Winter (US Standard Time / EST): Sunday 22:00 UTC
+///
+/// Returns elapsed hours since weekly open.
+pub fn hours_since_weekly_open(timestamp_utc: &str) -> Result<f64, EngineError> {
+    let dt = chrono::DateTime::parse_from_rfc3339(timestamp_utc)
+        .or_else(|_| chrono::DateTime::parse_from_str(timestamp_utc, "%Y-%m-%dT%H:%M:%SZ"))
+        .map_err(|e| EngineError::CalculationError(format!("Invalid timestamp format: {e}")))?;
+
+    let is_summer = is_us_daylight_saving(&dt);
+    let open_hour = if is_summer { 21 } else { 22 };
+    let sunday_hours = (24 - open_hour) as f64; // Summer: 3.0h (21..24), Winter: 2.0h (22..24)
+
+    let weekday = dt.weekday();
+    let hour = dt.hour();
+    let minute = dt.minute();
+    let second = dt.second();
+    let time_fraction = (minute as f64 * 60.0 + second as f64) / 3600.0;
+
+    match weekday {
+        Weekday::Sun => {
+            if hour >= open_hour {
+                Ok((hour - open_hour) as f64 + time_fraction)
+            } else {
+                Ok(0.0)
+            }
+        }
+        Weekday::Mon => Ok(sunday_hours + (hour as f64) + time_fraction),
+        Weekday::Tue => Ok(sunday_hours + 24.0 + (hour as f64) + time_fraction),
+        Weekday::Wed => Ok(sunday_hours + 48.0 + (hour as f64) + time_fraction),
+        Weekday::Thu => Ok(sunday_hours + 72.0 + (hour as f64) + time_fraction),
+        Weekday::Fri => Ok(sunday_hours + 96.0 + (hour as f64) + time_fraction),
+        Weekday::Sat => Ok(sunday_hours + 120.0 + (hour as f64) + time_fraction),
+    }
+}
+
 /// Runs a deterministic backtest simulation loop over chronological M1 candles.
 ///
 /// # Simulation Flow (Per Candle)
@@ -46,10 +146,11 @@ fn validate_candle(candle: &Candle) -> Result<(), EngineError> {
 ///    - Evaluates SL and TP touches against `candle.high` and `candle.low`.
 ///    - If both SL and TP are touched in the same bar, SL is treated as touched first
 ///      for conservative risk management.
-///    - Applies Exness broker execution rules (slippage-free range) to determine executed exit price.
+///    - Evaluates weekly open gap rule (`hours_since_open < 3.0`) vs normal slippage-free range.
 ///    - If closed, records [`ExecutionAuditRecord`] and updates balance curve.
 /// 2. If no position is active and pending orders remain:
 ///    - Validates order minimum stop level requirement.
+///    - Applies spread approximation: Long enters at Ask (`open + spread`), Short enters at Bid (`open`).
 ///    - Validates margin requirement against `current_balance`.
 ///    - Opens new active position with execution price of the current candle.
 /// 3. Computes final performance metrics into [`BacktestSummary`].
@@ -90,8 +191,13 @@ pub fn run_backtest(
     let mut total_spread_cost_usd = 0.0;
     let mut total_slippage_cost_usd = 0.0;
 
+    let spread_usd = config.default_spread_points * config.point_size;
+
     for candle in candles {
         let mut position_closed_this_bar = false;
+        let hours_since_open = hours_since_weekly_open(&candle.timestamp_utc)?;
+        let in_gap_window = hours_since_open < 3.0;
+
         // Step 1 & 2: Check SL and TP for active position
         if let Some(pos) = active_position.take() {
             let mut closed = false;
@@ -101,6 +207,7 @@ pub fn run_backtest(
                 slippage_usd: 0.0,
                 slippage_points: 0.0,
             };
+            let mut gap_rule_applied = false;
 
             match pos.order.direction {
                 Direction::Long => {
@@ -110,15 +217,53 @@ pub fn run_backtest(
                     // Conservative assumption: if both SL and TP are hit, SL is evaluated first
                     if sl_hit {
                         let sl = pos.order.sl_price.unwrap_or(0.0);
-                        let market_price = if candle.high < sl { candle.high } else { sl };
                         requested_exit = sl;
-                        exit_exec = apply_slippage_free_range(sl, market_price, config);
+                        // Gap occurs if bar opened below SL; otherwise filled at SL in continuous trading
+                        if candle.open < sl {
+                            let is_gap = (sl - candle.open).abs() > 1e-7;
+                            if in_gap_window && is_gap {
+                                exit_exec = apply_weekly_gap_rule(
+                                    sl,
+                                    candle.open,
+                                    hours_since_open,
+                                    config,
+                                );
+                                gap_rule_applied = true;
+                            } else {
+                                exit_exec = apply_slippage_free_range(sl, candle.open, config);
+                            }
+                        } else {
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: sl,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
                         closed = true;
                     } else if tp_hit {
                         let tp = pos.order.tp_price.unwrap_or(0.0);
-                        let market_price = if candle.low > tp { candle.low } else { tp };
                         requested_exit = tp;
-                        exit_exec = apply_slippage_free_range(tp, market_price, config);
+                        // Gap occurs if bar opened above TP; otherwise filled at TP in continuous trading
+                        if candle.open > tp {
+                            let is_gap = (candle.open - tp).abs() > 1e-7;
+                            if in_gap_window && is_gap {
+                                exit_exec = apply_weekly_gap_rule(
+                                    tp,
+                                    candle.open,
+                                    hours_since_open,
+                                    config,
+                                );
+                                gap_rule_applied = true;
+                            } else {
+                                exit_exec = apply_slippage_free_range(tp, candle.open, config);
+                            }
+                        } else {
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: tp,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
                         closed = true;
                     }
                 }
@@ -129,25 +274,72 @@ pub fn run_backtest(
                     // Conservative assumption: if both SL and TP are hit, SL is evaluated first
                     if sl_hit {
                         let sl = pos.order.sl_price.unwrap_or(0.0);
-                        let market_price = if candle.low > sl { candle.low } else { sl };
-                        requested_exit = sl;
-                        exit_exec = apply_slippage_free_range(sl, market_price, config);
+                        // Short exits by buying back at Ask price (market_exit = candle.open + spread_usd).
+                        // Target exit price at Ask is sl + spread_usd.
+                        let target_exit = sl + spread_usd;
+                        let market_exit = candle.open + spread_usd;
+                        requested_exit = target_exit;
+
+                        // Gap occurs if bar opened above SL (candle.open > sl); otherwise filled at target_exit in continuous trading
+                        if candle.open > sl {
+                            let is_gap = (candle.open - sl).abs() > 1e-7;
+                            if in_gap_window && is_gap {
+                                exit_exec = apply_weekly_gap_rule(
+                                    target_exit,
+                                    market_exit,
+                                    hours_since_open,
+                                    config,
+                                );
+                                gap_rule_applied = true;
+                            } else {
+                                exit_exec =
+                                    apply_slippage_free_range(target_exit, market_exit, config);
+                            }
+                        } else {
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: target_exit,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
                         closed = true;
                     } else if tp_hit {
                         let tp = pos.order.tp_price.unwrap_or(0.0);
-                        let market_price = if candle.high < tp { candle.high } else { tp };
-                        requested_exit = tp;
-                        exit_exec = apply_slippage_free_range(tp, market_price, config);
+                        // Short exits by buying back at Ask price (market_exit = candle.open + spread_usd).
+                        // Target exit price at Ask is tp + spread_usd.
+                        let target_exit = tp + spread_usd;
+                        let market_exit = candle.open + spread_usd;
+                        requested_exit = target_exit;
+
+                        // Gap occurs if bar opened below TP (candle.open < tp); otherwise filled at target_exit in continuous trading
+                        if candle.open < tp {
+                            let is_gap = (tp - candle.open).abs() > 1e-7;
+                            if in_gap_window && is_gap {
+                                exit_exec = apply_weekly_gap_rule(
+                                    target_exit,
+                                    market_exit,
+                                    hours_since_open,
+                                    config,
+                                );
+                                gap_rule_applied = true;
+                            } else {
+                                exit_exec =
+                                    apply_slippage_free_range(target_exit, market_exit, config);
+                            }
+                        } else {
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: target_exit,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
                         closed = true;
                     }
                 }
             }
 
             if closed {
-                // Zero commission Exness Standard: spread is already reflected in executed market prices
-                let spread_usd = 0.0;
                 let stop_level_checked = true;
-                let gap_rule_applied = false;
 
                 let record = create_audit_record(
                     pos.order.id.clone(),
@@ -157,7 +349,7 @@ pub fn run_backtest(
                     pos.entry_exec,
                     requested_exit,
                     exit_exec,
-                    spread_usd,
+                    pos.spread_usd,
                     stop_level_checked,
                     gap_rule_applied,
                     config,
@@ -207,7 +399,24 @@ pub fn run_backtest(
             let order = &orders[order_idx];
             validate_order_stop_level(order, config)?;
 
-            let entry_exec = apply_slippage_free_range(order.requested_price, candle.open, config);
+            // Spread modeling (ASUMSI-M2-07):
+            // Long enters at Ask (open + spread_usd), Short enters at Bid (open)
+            let market_entry = match order.direction {
+                Direction::Long => candle.open + spread_usd,
+                Direction::Short => candle.open,
+            };
+
+            let entry_exec = if in_gap_window {
+                apply_weekly_gap_rule(
+                    order.requested_price,
+                    market_entry,
+                    hours_since_open,
+                    config,
+                )
+            } else {
+                apply_slippage_free_range(order.requested_price, market_entry, config)
+            };
+
             let margin_required =
                 calculate_margin(order.lot_size, entry_exec.executed_price, config)?;
 
@@ -215,6 +424,7 @@ pub fn run_backtest(
                 active_position = Some(ActivePosition {
                     order: order.clone(),
                     entry_exec,
+                    spread_usd,
                 });
                 order_idx += 1;
             }
