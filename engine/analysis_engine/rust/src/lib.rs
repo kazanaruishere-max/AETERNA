@@ -27,3 +27,13 @@ pub use types::{
     ExecutionPriceResult, ExecutionType, MonteCarloResult, Order, PnlError, PnlResult,
     StrategySignal,
 };
+
+pub mod py_bindings;
+
+use pyo3::prelude::*;
+
+#[pymodule]
+fn aeterna_backtest(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    py_bindings::register_bindings(m)?;
+    Ok(())
+}
