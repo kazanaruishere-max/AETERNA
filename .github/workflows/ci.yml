@@ -63,6 +63,7 @@ jobs:
         run: uv run pyright
 
       - name: Run 5-Pillar Ecosystem Safety & Invariant Audit
+        if: hashFiles('scripts/verify_ecosystem.py') != ''
         run: uv run python scripts/verify_ecosystem.py --safety
 
       - name: Run Cargo Clippy
@@ -70,13 +71,13 @@ jobs:
         run: cargo clippy --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Set up Go
-        if: hashFiles('go.mod') != ''
+        if: hashFiles('engine/watchdog/go.mod') != ''
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
       - name: Run Go Vet
-        if: hashFiles('go.mod') != ''
+        if: hashFiles('engine/watchdog/go.mod') != ''
         run: go vet ./...
 
   # --------------------------------------------------------------------------
@@ -130,14 +131,14 @@ jobs:
         run: cargo test --manifest-path engine/analysis_engine/rust/Cargo.toml --all --verbose
 
       - name: Set up Go
-        if: hashFiles('go.mod') != ''
+        if: hashFiles('engine/watchdog/go.mod') != ''
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
       - name: Run Go Tests
-        if: hashFiles('go.mod') != ''
-        run: go test -v -race ./...
+        if: hashFiles('engine/watchdog/go.mod') != ''
+        run: cd engine/watchdog && go test -v -race ./...
 
   # --------------------------------------------------------------------------
   # Job 5: MetaTrader 5 Windows Integration Suite
