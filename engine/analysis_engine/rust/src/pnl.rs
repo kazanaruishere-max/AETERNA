@@ -14,7 +14,12 @@ pub fn calculate_pnl(
     calculate_pnl_with_spread(direction, entry_price, exit_price, lot_size, 0.0, config)
 }
 
-/// Calculates PnL including spread cost.
+/// Calculates PnL including spread cost telemetry breakdown.
+///
+/// Under Exness Standard (zero commission), spread is already implicitly reflected
+/// in the executed market prices (Ask for Long entry, Bid for Long exit).
+/// Therefore, `net_pnl_usd` equals `gross_pnl_usd`.
+/// `spread_cost_usd` is returned as a telemetry and audit reporting breakdown metric.
 ///
 /// # Errors
 /// Returns [`PnlError`] if input parameters, spread, or configuration values are invalid.
@@ -55,7 +60,12 @@ pub fn calculate_pnl_with_spread(
     let price_diff = direction.multiplier() * (exit_price - entry_price);
     let gross_pnl_usd = price_diff * lot_size * config.contract_size;
     let pnl_pips = price_diff / config.pip_size;
-    let net_pnl_usd = gross_pnl_usd - spread_cost_usd;
+    // Under Exness Standard (zero commission), the spread is already implicitly reflected
+    // in the executed market prices (Ask for Long entry, Bid for Long exit / Short entry).
+    // Gross PnL calculated from executed prices already incorporates the spread impact.
+    // Therefore, net_pnl_usd equals gross_pnl_usd. spread_cost_usd is maintained purely
+    // as a telemetry and audit reporting breakdown metric.
+    let net_pnl_usd = gross_pnl_usd;
 
     Ok(PnlResult {
         gross_pnl_usd,

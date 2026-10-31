@@ -25,7 +25,7 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 | `REQ-BKT-002` | arch §3.4 | Pemodelan rentang bebas slippage Exness dan simulasi slippage adaptif | M2 | COVERED | TASK-M2-02 | `test_slippage_free_range` | VERIFIED |
 | `REQ-BKT-003` | arch §3.4 | Validasi Stop Level minimum akun Standard Exness pada pending/SL/TP | M2 | COVERED | TASK-M2-02 | `test_stop_level_validation` | VERIFIED |
 | `REQ-BKT-004` | arch §3.4 | Simulasi Gap Rule Exness pada pembukaan pasar mingguan (3 jam pertama) | M2 | COVERED | TASK-M2-02 | `test_gap_rule` | VERIFIED |
-| `REQ-BKT-005` | arch §4.1 | Harness validasi Monte Carlo 1000 iterasi & Walk-Forward analysis | M2 | COVERED | TASK-M2-03 | `TEST-BKT-003` | IN_PROGRESS |
+| `REQ-BKT-005` | arch §4.1 | Harness validasi Monte Carlo 1000 iterasi & Walk-Forward analysis | M2 | COVERED | TASK-M2-03 | `test_monte_carlo_deterministic_reproducibility` | VERIFIED |
 
 ---
 

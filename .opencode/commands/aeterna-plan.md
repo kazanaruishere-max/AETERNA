@@ -2,11 +2,14 @@
 1. Dokumen acuan `PRD.md`, `architecture.md`, `security.md`, dan `docs/AGENTS.local.md` tersedia dan dapat dibaca.
 2. Operator menentukan topik perancangan atau nomor requirement/milestone target.
 
+## Skills Injected
+{file:.opencode/skills/aeterna-invariants/SKILL.md}
+
 ## Inputs
 - `$ARGUMENTS`: Topik arsitektur, modul yang hendak dirancang, atau nomor milestone (contoh: `M1 SQLite WAL Schema`).
 
 ## Procedure
-1. Baca konteks wajib modul terkait sesuai `docs/aeterna/agent-contract.md`.
+1. Baca konteks wajib modul terkait sesuai `docs/aeterna/agent-contract.md`. Pastikan skill `aeterna-invariants` dimuat.
 2. Delegasikan analisis mendalam ke sub-agent arsitek/spesialis yang berwenang (`aeterna-architect`, `aeterna-risk`, `aeterna-backtest`, atau lainnya).
 3. Susun analisis pemisahan modul `engine/` vs `instruments/`, skema antarmuka, dan invariant finansial.
 4. Periksa apakah terdapat kontradiksi antar-dokumen acuan.

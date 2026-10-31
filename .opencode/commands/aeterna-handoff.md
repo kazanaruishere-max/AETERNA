@@ -1,11 +1,15 @@
 ## Preconditions
 1. Sesi kerja hendak diakhiri, atau terjadi transisi milestone / pergantian topik besar.
 
+## Skills Injected
+{file:.opencode/skills/aeterna-handoff/SKILL.md}
+
 ## Inputs
 - `$ARGUMENTS`: Catatan opsional atau instruksi prioritas untuk sesi berikutnya.
 
 ## Procedure
-1. Baca commit git terakhir via `git log -1 --oneline`.
+1. Muat skill `aeterna-handoff`.
+2. Baca commit git terakhir via `git log -1 --oneline`.
 2. Evaluasi status Milestone Gate saat ini (`docs/aeterna/requirements.md`).
 3. Kumpulkan task yang selesai, task yang sedang berjalan, dan blocker yang aktif.
 4. Tulis file handoff tanggal hari ini: `.handoff/YYYY-MM-DD.md`.

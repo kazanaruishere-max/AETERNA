@@ -156,11 +156,82 @@ fn test_margin_and_spread_isolated_functions() -> Result<(), PnlError> {
     let spread = calculate_spread_cost(0.05, 0.15, &config)?;
     assert!((spread - 0.75).abs() < EPSILON);
 
-    // calculate_pnl_with_spread
+    // calculate_pnl_with_spread: net_pnl_usd equals gross_pnl_usd (no double-counting)
+    // while spread_cost_usd is reported as telemetry
     let res = calculate_pnl_with_spread(Direction::Long, 2740.20, 2745.00, 0.05, 0.15, &config)?;
     assert!((res.gross_pnl_usd - 24.00).abs() < EPSILON);
     assert!((res.spread_cost_usd - 0.75).abs() < EPSILON);
-    assert!((res.net_pnl_usd - (24.00 - 0.75)).abs() < EPSILON);
+    assert!(
+        (res.net_pnl_usd - 24.00).abs() < EPSILON,
+        "Expected net_pnl_usd == gross_pnl_usd (24.00), got {}",
+        res.net_pnl_usd
+    );
+
+    Ok(())
+}
+
+/// Test Regression (Anti Double-Counting):
+/// Explicitly tests when spread_usd > 0 is provided alongside real executed prices
+/// (Ask for Long entry, Bid for Short exit).
+/// Asserts net_pnl_usd == gross_pnl_usd exactly (NOT gross - spread).
+#[test]
+fn test_regression_spread_not_double_counted_in_net_pnl() -> Result<(), PnlError> {
+    let config = BacktestConfig {
+        leverage: 200.0,
+        ..BacktestConfig::default()
+    };
+
+    // 1. LONG Trade Skenario Riil:
+    // Market Bid = 2740.00, Spread = 0.20 USD (2.0 pips), maka Ask = 2740.20.
+    // Long entry dieksekusi di Ask = 2740.20. Exit di Bid = 2745.00.
+    // Price diff = 2745.00 - 2740.20 = 4.80.
+    // Gross PnL = 4.80 * 0.05 lot * 100 contract_size = $24.00.
+    // Biaya spread yang sudah tertanam di harga entry: 0.20 * 0.05 * 100 = $1.00.
+    let long_res = calculate_pnl_with_spread(
+        Direction::Long,
+        2740.20, // Real executed Ask price
+        2745.00, // Real executed Bid price
+        0.05,
+        0.20, // Real spread at entry
+        &config,
+    )?;
+
+    // Gross PnL wajib $24.00
+    assert!((long_res.gross_pnl_usd - 24.00).abs() < EPSILON);
+    // Spread cost telemetry wajib $1.00
+    assert!((long_res.spread_cost_usd - 1.00).abs() < EPSILON);
+    // REGRESI: net_pnl_usd WAJIB tepat sama dengan gross_pnl_usd ($24.00), BUKAN $23.00 ($24.00 - $1.00)
+    assert!(
+        (long_res.net_pnl_usd - 24.00).abs() < EPSILON,
+        "Double-counting bug on Long! Expected net_pnl_usd == 24.00, got {}",
+        long_res.net_pnl_usd
+    );
+    assert!(
+        (long_res.net_pnl_usd - 23.00).abs() > 0.5,
+        "Double-counting detected: net_pnl_usd is deducting spread_cost_usd!"
+    );
+
+    // 2. SHORT Trade Skenario Riil:
+    // Entry di Bid = 2742.00. Exit di Ask = 2751.50 (Bid 2751.30 + spread 0.20).
+    // Gross PnL = -1.0 * (2751.50 - 2742.00) * 0.08 * 100 = -$76.00.
+    // Spread cost telemetry = 0.20 * 0.08 * 100 = $1.60.
+    let short_res = calculate_pnl_with_spread(
+        Direction::Short,
+        2742.00, // Real executed Bid price
+        2751.50, // Real executed Ask price
+        0.08,
+        0.20, // Real spread at exit
+        &config,
+    )?;
+
+    assert!((short_res.gross_pnl_usd - (-76.00)).abs() < EPSILON);
+    assert!((short_res.spread_cost_usd - 1.60).abs() < EPSILON);
+    // REGRESI: net_pnl_usd WAJIB -$76.00, BUKAN -$77.60 (-$76.00 - $1.60)
+    assert!(
+        (short_res.net_pnl_usd - (-76.00)).abs() < EPSILON,
+        "Double-counting bug on Short! Expected net_pnl_usd == -76.00, got {}",
+        short_res.net_pnl_usd
+    );
 
     Ok(())
 }

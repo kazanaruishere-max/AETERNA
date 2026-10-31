@@ -2,11 +2,15 @@
 1. Builder OMP telah menyelesaikan implementasi task packet dan melaporkan hasil eksekusinya.
 2. File task packet acuan tersedia di `.handoff/tasks/`.
 
+## Skills Injected
+{file:.opencode/skills/aeterna-verify/SKILL.md}
+{file:.opencode/skills/aeterna-milestone-gate/SKILL.md}
+
 ## Inputs
 - `$ARGUMENTS`: ID Task yang hendak diaudit (contoh: `TASK-M1-01`).
 
 ## Procedure
-1. Panggil sub-agent `aeterna-verifier`.
+1. Panggil sub-agent `aeterna-verifier`. Pastikan skill `aeterna-verify` dan `aeterna-milestone-gate` dimuat aktif.
 2. Verifikasi kepatuhan scope via `git diff --stat`: pastikan tidak ada file di luar whitelist yang disentuh.
 3. Verifikasi pendaftaran kepemilikan kode di `docs/aeterna/code-ownership.md`.
 4. Jalankan linter dan formatter resmi (Python `ruff` & `pyright`, Rust `clippy`, Go `go vet`).

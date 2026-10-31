@@ -133,3 +133,62 @@ pub enum BrokerRuleError {
     #[error("PnL computation error: {0}")]
     PnlCalculationError(#[from] PnlError),
 }
+
+/// M1 Candle representation for backtest simulation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Candle {
+    pub timestamp_utc: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub tick_volume: u64,
+}
+
+/// Strategy signal emitted by a trading strategy for backtest execution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategySignal {
+    pub timestamp_utc: String,
+    pub order: Order,
+}
+
+/// Aggregated performance summary of a backtest simulation run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BacktestSummary {
+    pub total_trades: usize,
+    pub win_trades: usize,
+    pub loss_trades: usize,
+    pub gross_profit_usd: f64,
+    pub gross_loss_usd: f64,
+    pub net_pnl_usd: f64,
+    pub profit_factor: f64,
+    pub max_drawdown_usd: f64,
+    pub max_drawdown_pct: f64,
+    pub total_spread_cost_usd: f64,
+    pub total_slippage_cost_usd: f64,
+}
+
+/// Results of a Trade Sequence Shuffling Monte Carlo analysis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonteCarloResult {
+    pub iterations: usize,
+    pub median_max_dd_pct: f64,
+    pub percentile_95_max_dd_pct: f64,
+    pub percentile_99_max_dd_pct: f64,
+    pub risk_of_ruin_10pct_dd: f64,
+}
+
+/// Top-level error enum for the simulation and analysis engine.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum EngineError {
+    #[error("Broker rule error: {0}")]
+    BrokerError(#[from] BrokerRuleError),
+    #[error("PnL calculation error: {0}")]
+    PnlError(#[from] PnlError),
+    #[error("Invalid candle data: high must be >= low, and prices must be positive and finite")]
+    InvalidCandleData,
+    #[error("Empty trade history: backtest produced zero trades for Monte Carlo analysis")]
+    EmptyTradeHistory,
+    #[error("Simulation calculation error: {0}")]
+    CalculationError(String),
+}

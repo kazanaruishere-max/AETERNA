@@ -13,6 +13,18 @@ Dokumen ini memuat kontrak kerja mutlak (*hard constraints*) bagi seluruh agen A
 2. Setiap respons final agen wajib diawali dengan blok metadata `context_manifest`. Agen wajib menyebutkan file dan bab/baris yang telah dibaca beserta alasannya.
 3. Jika dokumen yang dibutuhkan tidak ditemukan atau terjadi anomali, agen **dilarang berasumsi**. Agen wajib menyetel `status: BLOCKED` dan mencatat pertanyaan di `open_questions`.
 
+### 1.1 Automatic Skill Ingestion Gate
+1. Setiap sub-agent spesialis (`aeterna-*`) memiliki daftar skill wajib (*Mandatory Skills*) pada seksi `SKILL AUTO-LOAD MATRIX` di file konfigurasinya.
+2. Pada **Turn 1 aktivasi**, sebelum melakukan penalaran atau analisis, sub-agent **WAJIB memanggil tool `skill`** untuk menginjeksi keahlian wajibnya ke dalam konteks percakapan.
+3. Sub-agent wajib mendeteksi kondisi pemicu situasional (*Conditional Triggers*) untuk memuat skill on-demand:
+   - Menghadapi kegagalan test / exception / bug tersembunyi ──► Wajib memanggil `skill(name="diagnose")`.
+   - Mengaudit atau menulis kode yang menyentuh token/kredensial/keamanan ──► Wajib memanggil `skill(name="security-review")`.
+   - Menjalankan iterasi perbaikan / verifikasi multi-run ──► Wajib memanggil `skill(name="verification-loop")`.
+   - Merancang refactoring atau standardisasi kode ──► Wajib memanggil `skill(name="coding-standards")`.
+   - Merancang kontrak endpoint / API schema ──► Wajib memanggil `skill(name="api-design")`.
+   - Merancang skema database / IPC / storage patterns ──► Wajib memanggil `skill(name="backend-patterns")`.
+4. Output sub-agent yang tidak memuat deklarasi skill yang di-load di dalam `context_manifest` otomatis berstatus `BLOCKED`.
+
 ---
 
 ## 2. Evidence Rule & No-Guessing

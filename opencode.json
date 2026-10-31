@@ -14,7 +14,15 @@
       "*": "deny",
       "aeterna-*": "allow",
       "omp-task-protocol": "allow",
-      "handoff": "allow"
+      "handoff": "allow",
+      "security-review": "allow",
+      "diagnose": "allow",
+      "tdd-workflow": "allow",
+      "coding-standards": "allow",
+      "api-design": "allow",
+      "backend-patterns": "allow",
+      "verification-loop": "allow",
+      "understand": "allow"
     }
   },
   "command": {
