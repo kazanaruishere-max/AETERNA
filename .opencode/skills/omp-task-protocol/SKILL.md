@@ -23,6 +23,8 @@ Mengatur standarisasi pembuatan paket tugas mandiri (*task packet*) dari OpenCod
 4. Wajib menyertakan deklarasi efek samping (*side-effects declaration*).
 5. Jika berupa tugas refactoring, wajib menyertakan path *characterization test* eksisting.
 6. Diff budget maksimal 3 file dan < 300 baris per task packet.
+7. **Git Branch & PR Mandate (Tier A & B)**: Mulai TASK-M2-04, seluruh task Tier A dan B wajib dialokasikan branch `feat/m<Milestone>-<slug>` dan membuat PR via `gh pr create`. Direct commit ke `main` dilarang.
+8. **Larangan Mutlak Auto-Merge**: Dilarang memanggil `gh pr merge` atau auto-merge API. Merge hanya dilakukan manual oleh Human Operator.
 
 # Required inputs
 - Rancangan modul teknis dari sub-agent spesialis (`aeterna-*`).
@@ -31,11 +33,12 @@ Mengatur standarisasi pembuatan paket tugas mandiri (*task packet*) dari OpenCod
 
 # Procedure
 1. Baca template standar di `docs/aeterna/omp-task-template.md`.
-2. Petakan requirement ke file spesifik dan buat RTM task.
-3. Tetapkan acceptance commands dengan runner resmi (`uv run`, `cargo`, `go`).
-4. Daftarkan file ke entri ownership di `docs/aeterna/code-ownership.md`.
-5. Tulis file task packet ke `.handoff/tasks/TASK-M<Milestone>-<Num>.md`.
-6. Instruksikan operator untuk mengeksekusi OMP: `omp @.handoff/tasks/TASK-M<Milestone>-<Num>.md`.
+2. Alokasikan Task ID dan nama branch `feat/m<Milestone>-<slug>`.
+3. Petakan requirement ke file spesifik dan buat RTM task.
+4. Tetapkan acceptance commands dengan runner resmi (`uv run`, `cargo`, `go`) serta seksi 8.1 Git workflow (`git checkout -b`, `git commit`, `git push`, `gh pr create`).
+5. Daftarkan file ke entri ownership di `docs/aeterna/code-ownership.md`.
+6. Tulis file task packet ke `.handoff/tasks/TASK-M<Milestone>-<Num>.md`.
+7. Instruksikan operator untuk mengeksekusi OMP: `omp @.handoff/tasks/TASK-M<Milestone>-<Num>.md`.
 
 # Output contract
 File task packet lengkap pada path `.handoff/tasks/TASK-M<X>-<YY>.md` mematuhi 15 seksi `docs/aeterna/omp-task-template.md`.

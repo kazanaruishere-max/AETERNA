@@ -80,6 +80,13 @@ Kode yang dibangun oleh OMP dan diverifikasi oleh OpenCode wajib mematuhi metrik
 3. **Pemisahan Commit**: Commit refactor dilarang dicampur dengan commit penambahan fitur baru.
 4. **Side-Effect Ban**: Dilarang mengubah kontrak publik API, skema database, struktur konfigurasi YAML, format log, atau jalur jaringan di luar cakupan task. Setiap potensi efek samping wajib dideklarasikan tertulis pada task packet.
 
+### 6.1 Larangan Mutlak Otomasi Merge (`gh pr merge` Ban)
+1. Perintah `gh pr merge`, `git merge`, atau auto-merge API **DILARANG KERAS** dipanggil oleh agent mana pun (OpenCode, OMP, maupun sub-agent `aeterna-*` mana pun) tanpa pengecualian.
+2. Peran `aeterna-verifier` dibatasi HANYA untuk menerbitkan rekomendasi status:
+   - `MERGE_READY`: Seluruh tes lokal lulus, CI hijau, scope patuh, dan golden test valid.
+   - `CHANGES_REQUESTED`: Terdapat kegagalan pengujian, deviasi lint, atau pelanggaran scope.
+3. Tombol atau perintah merge **HANYA BOLEH DIJALANKAN SECARA MANUAL OLEH HUMAN OPERATOR**. Pelanggaran terhadap aturan ini berstatus P0 Violation (Security & Safety Breach).
+
 ---
 
 ## 7. Skema Output Amplop Baku (Standard Output Envelope)
