@@ -46,21 +46,28 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install Python Dependencies
-        run: uv sync --all-groups
-
-      - name: Run Pyright (Strict Mode)
-        run: uv run pyright
-
-      - name: Set up Rust & Clippy
+      - name: Set up Rust Toolchain
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
+      - name: Install Python Dependencies
+        run: uv sync --all-groups
+
+      - name: Build Rust PyO3 Extension
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
+
+      - name: Run Pyright (Strict Mode)
+        run: uv run pyright
+
+      - name: Run 5-Pillar Ecosystem Safety & Invariant Audit
+        run: uv run python scripts/verify_ecosystem.py --safety
+
       - name: Run Cargo Clippy
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Set up Go
         if: hashFiles('go.mod') != ''
@@ -90,8 +97,16 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Set up Rust Toolchain
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install Python Dependencies
         run: uv sync --all-groups
+
+      - name: Build Rust PyO3 Extension
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
 
       - name: Execute Deterministic Financial Golden Tests
         run: uv run pytest tests/ -v -m "golden or not integration"
@@ -112,7 +127,7 @@ jobs:
 
       - name: Run Cargo Test
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: cargo test --all --verbose
+        run: cargo test --manifest-path engine/analysis_engine/rust/Cargo.toml --all --verbose
 
       - name: Set up Go
         if: hashFiles('go.mod') != ''
