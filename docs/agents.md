@@ -95,8 +95,10 @@ Untuk mencegah sub-agent atau pull request memodifikasi logika proteksi risiko a
    - `engine/execution/`
    - `engine/telegram_bot/`
    - `instruments/xauusd/config/parameters.yaml`
-2. PR yang menyentuh salah satu dari 6 path tersebut wajib direview dan disetujui manual oleh Lead Architect sebelum dapat di-merge.
-3. Status check `Financial Golden Tests (Deterministic)` berstatus wajib (*required check*) pada pengaturan GitHub Branch Protection `main`, memblokir merge secara fisik jika kalkulasi numerik gagal.
+2. **Kebijakan Wajib Branch & PR (Efektif per TASK-M2-04)**: Seluruh perubahan pada Tier A dan Tier B wajib melalui branch `feat/m<Milestone>-<slug>` dan membuat Pull Request (`gh pr create`). Direct commit ke `main` dilarang mutlak. Commit historis terdahulu (`c32f6df`, `cc79e81`, `0199a26`) telah diaudit manual secara terpisah oleh operator.
+3. PR yang menyentuh salah satu dari 6 path tersebut wajib direview dan disetujui manual oleh Lead Architect sebelum dapat di-merge.
+4. Status check `Financial Golden Tests (Deterministic)` berstatus wajib (*required check*) pada pengaturan GitHub Branch Protection `main`, memblokir merge secara fisik jika kalkulasi numerik gagal.
+5. **Larangan Mutlak Otomasi Merge (`gh pr merge` Ban)**: Agent mana pun (OpenCode, OMP, maupun sub-agent `aeterna-*`) **DILARANG KERAS** memanggil `gh pr merge`, `git merge`, atau auto-merge API. Status `MERGE_READY` dari `aeterna-verifier` adalah murni rekomendasi teknis. Tombol/perintah merge hanya boleh dieksekusi secara manual oleh Human Operator.
 
 ---
 

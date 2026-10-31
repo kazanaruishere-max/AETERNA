@@ -31,6 +31,22 @@ dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
     "pyright>=1.1.370",
+    "maturin>=1.5.0",
+    "ruff>=0.5.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+exclude = [
+    "docs",
+    "engine/ingestion",
+    "engine/models",
+    "engine/shared",
+    "engine/telegram_bot",
+    "instruments",
+    "tests/test_database.py",
+    "tests/test_ingestion.py",
+    "tests/test_telegram_templates.py",
 ]
 
 [build-system]
@@ -51,3 +67,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["extension-module"]

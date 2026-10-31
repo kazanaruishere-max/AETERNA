@@ -15,7 +15,7 @@ pub mod types;
 pub use audit::{
     create_audit_record, create_audit_record_from_prices, AuditLedger, ExecutionAuditRecord,
 };
-pub use engine::run_backtest;
+pub use engine::{hours_since_weekly_open, run_backtest};
 pub use exness_rules::{
     apply_slippage_free_range, apply_weekly_gap_rule, validate_order_stop_level,
     validate_stop_level,
@@ -27,3 +27,13 @@ pub use types::{
     ExecutionPriceResult, ExecutionType, MonteCarloResult, Order, PnlError, PnlResult,
     StrategySignal,
 };
+
+pub mod py_bindings;
+
+use pyo3::prelude::*;
+
+#[pymodule]
+fn aeterna_backtest(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    py_bindings::register_bindings(m)?;
+    Ok(())
+}

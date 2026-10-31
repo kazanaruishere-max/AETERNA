@@ -11,6 +11,8 @@ metadata:
   task_id: TASK-M<Milestone>-<Num>
   tier: A | B | C
   target_milestone: M<1-7>
+  target_branch: feat/m<Milestone>-<slug>
+  worktree_dir: .worktrees/<slug>
   covers_req: [REQ-<DOM>-<NUM>, REQ-<DOM>-<NUM>]
   depends_on: [TASK-M<X>-<Y>]
   base_commit: <hash_commit_terakhir>
@@ -87,6 +89,30 @@ uv run ruff format --check .
 # 3. Jalankan type checking
 uv run pyright
 ```
+
+---
+
+## 8.1 Git Branch & Pull Request Protocol (Wajib untuk Tier A & Tier B)
+Untuk seluruh task Tier A dan Tier B (mulai TASK-M2-04), dilarang commit langsung ke `main`. Alur eksekusi Git:
+```powershell
+# 1. Buat branch tugas baru dari main terbaru
+git checkout -b feat/m<Milestone>-<slug>
+
+# 2. Setelah seluruh Acceptance Commands di atas lolos 100%, stage file scope
+git add <file_di_seksi_2>
+
+# 3. Buat commit terstandarisasi Conventional Commits
+git commit -m "<type>(<scope>): <ringkasan imperatif>"
+
+# 4. Push branch ke remote
+git push -u origin feat/m<Milestone>-<slug>
+
+# 5. Buat Pull Request ke branch main
+gh pr create --title "<type>(<scope>): <ringkasan imperatif>" --body "Closes TASK-M<Milestone>-<Num>`n`nAcceptance Criteria Verified:`n- Unit Tests: PASS`n- Lint/Format: PASS`n- Typecheck: PASS"
+
+# 6. STOP! Dilarang keras memanggil 'gh pr merge'. Merge adalah wewenang eksklusif Human Operator.
+```
+*Catatan Tier C*: Khusus task dokumentasi/chore non-breaking, direct commit ke `main` diizinkan jika diinstruksikan eksplisit oleh operator.
 
 ---
 
