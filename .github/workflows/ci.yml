@@ -159,8 +159,16 @@ jobs:
       - name: Set up Python 3.12 (Win32 Native)
         run: uv python install 3.12
 
+      - name: Set up Rust Toolchain
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install Dependencies
         run: uv sync --all-groups
+
+      - name: Build Rust PyO3 Extension
+        if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
+        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
 
       - name: Run MT5 Execution Tests (Mock / Offline Terminal Tests)
         run: |
