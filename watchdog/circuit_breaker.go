@@ -83,9 +83,13 @@ func writeLockFileAtomically(path string, data []byte) error {
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return fmt.Errorf("write tmp lock file: %w", err)
 	}
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("[WARN] Failed to remove pre-existing lock file %s: %v", path, err)
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
+		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[WARN] Failed to cleanup tmp lock file %s: %v", tmpPath, rmErr)
+		}
 		return os.WriteFile(path, data, 0o644)
 	}
 	return nil
@@ -120,7 +124,10 @@ func (cb *CircuitBreaker) CheckDailyLoss(ctx context.Context, state *SystemState
 			DailyLossUSD: lossUSD,
 			DailyLossPct: lossPct,
 		}
-		data, _ := json.MarshalIndent(payload, "", "  ")
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return false, fmt.Errorf("marshal daily lock payload: %w", err)
+		}
 		if err := writeLockFileAtomically(cb.cfg.DailyLockPath, data); err != nil {
 			return true, fmt.Errorf("write daily lock file: %w", err)
 		}
@@ -138,7 +145,11 @@ func (cb *CircuitBreaker) TriggerEmergencyKillswitch(ctx context.Context, reason
 		CurrentEquity: current,
 		DrawdownPct:   ddPct,
 	}
-	data, _ := json.MarshalIndent(payload, "", "  ")
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		log.Printf("[ERROR] Failed to marshal emergency killswitch lock payload: %v", err)
+		return fmt.Errorf("marshal emergency lock payload: %w", err)
+	}
 	if err := writeLockFileAtomically(cb.cfg.KillswitchLockPath, data); err != nil {
 		log.Printf("[ERROR] Failed to write emergency killswitch lock file: %v", err)
 	}

@@ -56,7 +56,9 @@ func createTestDB(t *testing.T) (string, func()) {
 	dbPath := filepath.Join(tmpDir, "test_trading.db")
 	initDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		_ = os.RemoveAll(tmpDir)
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			t.Logf("failed to remove tmp dir: %v", rmErr)
+		}
 		t.Fatalf("failed to open init db: %v", err)
 	}
 
@@ -86,15 +88,22 @@ func createTestDB(t *testing.T) (string, func()) {
 		last_news_event, last_updated_utc
 	) VALUES (1, 'NORMAL', 1.2, 1.2, 0.0, 0, 10000.0, 0.0, 0, NULL, '2026-11-01T12:00:00Z');
 	`
-	if _, err := initDB.Exec(ddl); err != nil {
-		_ = initDB.Close()
-		_ = os.RemoveAll(tmpDir)
+	if _, err = initDB.Exec(ddl); err != nil {
+		if closeErr := initDB.Close(); closeErr != nil {
+			t.Logf("failed to close init db: %v", closeErr)
+		}
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			t.Logf("failed to remove tmp dir: %v", rmErr)
+		}
 		t.Fatalf("failed to exec schema ddl: %v", err)
 	}
-	_ = initDB.Close()
-
+	if err = initDB.Close(); err != nil {
+		t.Fatalf("failed to close init db: %v", err)
+	}
 	cleanup := func() {
-		_ = os.RemoveAll(tmpDir)
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			t.Logf("cleanup temp dir failed: %v", rmErr)
+		}
 	}
 	return dbPath, cleanup
 }
@@ -107,8 +116,12 @@ func TestPreEntryMaxConcurrentReject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	_, _ = initDB.Exec("UPDATE system_state SET active_positions_count = 1 WHERE id = 1")
-	_ = initDB.Close()
+	if _, err = initDB.Exec("UPDATE system_state SET active_positions_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("update system_state: %v", err)
+	}
+	if err = initDB.Close(); err != nil {
+		t.Fatalf("close initDB: %v", err)
+	}
 
 	roDB, err := OpenReadOnly(dbPath)
 	if err != nil {
@@ -148,8 +161,12 @@ func TestPreEntryMaxDailyTradesReject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	_, _ = initDB.Exec("UPDATE system_state SET trades_today_count = 5 WHERE id = 1")
-	_ = initDB.Close()
+	if _, err = initDB.Exec("UPDATE system_state SET trades_today_count = 5 WHERE id = 1"); err != nil {
+		t.Fatalf("update system_state: %v", err)
+	}
+	if err = initDB.Close(); err != nil {
+		t.Fatalf("close initDB: %v", err)
+	}
 
 	roDB, err := OpenReadOnly(dbPath)
 	if err != nil {

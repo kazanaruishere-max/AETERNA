@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
@@ -60,7 +61,9 @@ func OpenReadOnly(dbPath string) (*ReadOnlyDB, error) {
 	db.SetConnMaxLifetime(0)
 
 	if err := db.Ping(); err != nil {
-		_ = db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("[ERROR] Failed to close database after ping failure: %v", closeErr)
+		}
 		return nil, fmt.Errorf("ping sqlite read-only: %w", err)
 	}
 

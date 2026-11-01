@@ -87,7 +87,9 @@ func (m *OSProcessManager) IsProcessAlive(pid int) bool {
 // logEmergency writes a FATAL audit entry to standard error and emergency log file.
 func (m *OSProcessManager) logEmergency(message string) {
 	entry := fmt.Sprintf("[%s] [FATAL_EMERGENCY] %s\n", time.Now().UTC().Format(time.RFC3339), message)
-	_, _ = fmt.Fprint(os.Stderr, entry)
+	if _, err := fmt.Fprint(os.Stderr, entry); err != nil {
+		log.Printf("[WARN] Failed to write emergency message to stderr: %v", err)
+	}
 
 	dir := filepath.Dir(m.emergencyLogPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -101,7 +103,9 @@ func (m *OSProcessManager) logEmergency(message string) {
 		return
 	}
 	defer f.Close()
-	_, _ = f.WriteString(entry)
+	if _, err := f.WriteString(entry); err != nil {
+		log.Printf("[ERROR] Failed to write to emergency log file: %v", err)
+	}
 }
 
 // TerminateProcess executes graceful SIGTERM, awaits grace period, then escalates to SIGKILL.
@@ -124,8 +128,12 @@ func (m *OSProcessManager) TerminateProcess(ctx context.Context, reason string) 
 	}
 
 	m.logEmergency(fmt.Sprintf("Dispatching SIGTERM/Interrupt to PID %d. Reason: %s", pid, reason))
-	_ = p.Signal(syscall.SIGTERM)
-	_ = p.Signal(os.Interrupt)
+	if termErr := p.Signal(syscall.SIGTERM); termErr != nil {
+		m.logEmergency(fmt.Sprintf("SIGTERM signal returned error (fallback to Interrupt): %v", termErr))
+	}
+	if intErr := p.Signal(os.Interrupt); intErr != nil {
+		m.logEmergency(fmt.Sprintf("Interrupt signal returned error: %v", intErr))
+	}
 
 	deadline := time.Now().Add(m.gracePeriod)
 	for time.Now().Before(deadline) {

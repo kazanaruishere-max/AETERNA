@@ -31,10 +31,12 @@ func PanicRecoveryMiddleware(next http.Handler) http.Handler {
 				log.Printf("[PANIC_RECOVERED] Watchdog HTTP handler recovered: %v\nStack:\n%s", rec, debug.Stack())
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(OrderResponse{
+				if encErr := json.NewEncoder(w).Encode(OrderResponse{
 					Allowed: false,
 					Reason:  "internal_server_panic",
-				})
+				}); encErr != nil {
+					log.Printf("[ERROR] Failed to encode panic response: %v", encErr)
+				}
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -74,10 +76,12 @@ func (s *Server) handleValidateOrder(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(OrderResponse{
+		if encErr := json.NewEncoder(w).Encode(OrderResponse{
 			Allowed: false,
 			Reason:  "invalid_json_payload",
-		})
+		}); encErr != nil {
+			log.Printf("[ERROR] Failed to encode invalid payload response: %v", encErr)
+		}
 		return
 	}
 
@@ -88,7 +92,9 @@ func (s *Server) handleValidateOrder(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
+		log.Printf("[ERROR] Failed to encode order response: %v", encErr)
+	}
 }
 
 // handleStatus reports watchdog health and lock file states.
@@ -101,7 +107,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"killswitch_active": fileExists(s.cfg.KillswitchLockPath),
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(status)
+	if encErr := json.NewEncoder(w).Encode(status); encErr != nil {
+		log.Printf("[ERROR] Failed to encode status response: %v", encErr)
+	}
 }
 
 // Start runs the HTTP listener on the configured bind address.
