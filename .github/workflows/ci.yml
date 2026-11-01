@@ -71,15 +71,14 @@ jobs:
         run: cargo clippy --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Set up Go
-        if: hashFiles('engine/watchdog/go.mod') != ''
+        if: hashFiles('watchdog/go.mod') != ''
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
       - name: Run Go Vet
-        if: hashFiles('engine/watchdog/go.mod') != ''
-        run: go vet ./...
-
+        if: hashFiles('watchdog/go.mod') != ''
+        run: cd watchdog && go vet ./...
   # --------------------------------------------------------------------------
   # Job 3: Financial Golden Tests (Mandatory Blocking Gate)
   # --------------------------------------------------------------------------
@@ -131,15 +130,14 @@ jobs:
         run: cargo test --manifest-path engine/analysis_engine/rust/Cargo.toml --all --verbose
 
       - name: Set up Go
-        if: hashFiles('engine/watchdog/go.mod') != ''
+        if: hashFiles('watchdog/go.mod') != ''
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
       - name: Run Go Tests
-        if: hashFiles('engine/watchdog/go.mod') != ''
-        run: cd engine/watchdog && go test -v -race ./...
-
+        if: hashFiles('watchdog/go.mod') != ''
+        run: cd watchdog && go test -v -race ./...
   # --------------------------------------------------------------------------
   # Job 5: MetaTrader 5 Windows Integration Suite
   # --------------------------------------------------------------------------
