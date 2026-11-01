@@ -20,7 +20,7 @@ class CandleDict(TypedDict):
     low: float
     close: float
     tick_volume: int
-
+    regime: NotRequired[str | None]
 
 class OrderDict(TypedDict):
     """Order dictionary representation for backtest simulation."""
@@ -58,7 +58,7 @@ class BacktestConfigDict(TypedDict, total=False):
     stop_level_points: float
     slippage_free_points: float
     default_spread_points: float
-
+    max_holding_seconds: NotRequired[int]
 
 class BacktestSummaryDict(TypedDict):
     """Performance metrics summary returned by simulation loop."""
@@ -95,7 +95,7 @@ class AuditRecordDict(TypedDict):
     margin_required_usd: float
     stop_level_checked: bool
     gap_rule_applied: bool
-
+    exit_reason: str
 
 class MonteCarloResultDict(TypedDict):
     """Monte Carlo trade sequence shuffling percentile results."""

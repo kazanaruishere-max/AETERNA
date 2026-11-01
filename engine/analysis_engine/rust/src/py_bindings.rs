@@ -54,6 +54,9 @@ fn parse_config(dict_opt: Option<&Bound<'_, PyDict>>) -> PyResult<BacktestConfig
     if let Some(item) = dict.get_item("default_spread_points")? {
         cfg.default_spread_points = item.extract::<f64>()?;
     }
+    if let Some(item) = dict.get_item("max_holding_seconds")? {
+        cfg.max_holding_seconds = item.extract::<u64>()?;
+    }
     Ok(cfg)
 }
 
@@ -99,6 +102,16 @@ fn parse_candle(dict: &Bound<'_, PyDict>) -> PyResult<Candle> {
         ));
     }
 
+    let regime = if let Some(item) = dict.get_item("regime")? {
+        if item.is_none() {
+            None
+        } else {
+            Some(item.extract::<String>()?)
+        }
+    } else {
+        None
+    };
+
     Ok(Candle {
         timestamp_utc,
         open,
@@ -106,6 +119,7 @@ fn parse_candle(dict: &Bound<'_, PyDict>) -> PyResult<Candle> {
         low,
         close,
         tick_volume,
+        regime,
     })
 }
 
@@ -238,6 +252,7 @@ fn audit_record_to_py(py: Python<'_>, a: &ExecutionAuditRecord) -> PyResult<PyOb
     dict.set_item("margin_required_usd", a.margin_required_usd)?;
     dict.set_item("stop_level_checked", a.stop_level_checked)?;
     dict.set_item("gap_rule_applied", a.gap_rule_applied)?;
+    dict.set_item("exit_reason", &a.exit_reason)?;
     Ok(dict.into())
 }
 
