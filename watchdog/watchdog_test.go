@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -592,6 +593,11 @@ func TestProcessTerminationSIGKILLEscalation(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start mock child process: %v", err)
 	}
+	go func() {
+		if waitErr := cmd.Wait(); waitErr != nil {
+			log.Printf("[INFO] mock test process exited: %v", waitErr)
+		}
+	}()
 	pid := cmd.Process.Pid
 
 	pidPath := filepath.Join(tmpDir, "python_engine.pid")

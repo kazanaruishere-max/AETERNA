@@ -81,7 +81,23 @@ func (m *OSProcessManager) IsProcessAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return p.Signal(syscall.Signal(0)) == nil
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	if runtime.GOOS == "linux" {
+		statusData, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+		if err == nil {
+			for _, line := range strings.Split(string(statusData), "\n") {
+				if strings.HasPrefix(line, "State:") {
+					if strings.Contains(line, "Z (zombie)") {
+						return false
+					}
+					break
+				}
+			}
+		}
+	}
+	return true
 }
 
 // logEmergency writes a FATAL audit entry to standard error and emergency log file.
