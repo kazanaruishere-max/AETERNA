@@ -41,6 +41,16 @@ state_machine:
   pre_news_watch_minutes: 10
   ewma_alpha: 0.08
 
+news_schedule_defaults:
+  # CATATAN AUDIT: Jam rilis di bawah ini adalah ASUMSI berdasarkan jadwal historis standar
+  # Biro Statistik AS (BLS / BEA). FRED API 'releases/dates' hanya menyediakan tanggal rilis,
+  # bukan jam presisi. Nilai ini harus dicek secara berkala bila ada perubahan jadwal rilis resmi.
+  cpi_time_eastern: "08:30:00"      # release_id 10 (BLS)
+  nfp_time_eastern: "08:30:00"      # release_id 50 (BLS)
+  gdp_time_eastern: "08:30:00"      # release_id 53 (BEA)
+  pce_time_eastern: "08:30:00"      # release_id 82 (BEA)
+  fomc_time_eastern: "14:00:00"     # Federal Reserve FOMC Statement
+
 liquidity:
   low_liquidity_tick_z_threshold: -2.0
   graduated_sizing_scale: 0.5      # Potong lot 50% saat likuiditas tipis
