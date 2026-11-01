@@ -12,7 +12,7 @@ use crate::exness_rules::{
 use crate::pnl::calculate_margin;
 use crate::types::{
     BacktestConfig, BacktestSummary, Candle, Direction, DiscardedOrderRecord, EngineError,
-    ExecutionAuditRecord, ExecutionPriceResult, Order,
+    ExecutionAuditRecord, ExecutionPriceResult, ExitReason, Order,
 };
 
 /// Helper to parse ISO-8601 / RFC3339 UTC timestamp.
@@ -39,6 +39,7 @@ struct ActivePosition {
     order: Order,
     entry_exec: ExecutionPriceResult,
     spread_usd: f64,
+    entry_candle_timestamp_utc: String,
 }
 
 /// Validates whether a [`Candle`] satisfies price consistency and positive/finite rules.
@@ -201,6 +202,14 @@ pub fn run_backtest(
                 w[1].timestamp_utc, w[0].timestamp_utc
             )));
         }
+        if w[1].regime != w[0].regime
+            && (curr_dt.minute() != 0 || curr_dt.second() != 0 || curr_dt.hour() % 4 != 0)
+        {
+            return Err(EngineError::CalculationError(format!(
+                "Invalid regime transition: H4 regime can only transition at 4-hour boundaries, found at {}",
+                w[1].timestamp_utc
+            )));
+        }
     }
 
     // 2. Validate ascending orders
@@ -245,6 +254,7 @@ pub fn run_backtest(
         // Step 1 & 2: Check SL and TP for active position
         if let Some(pos) = active_position.take() {
             let mut closed = false;
+            let mut exit_reason = "";
             let mut requested_exit = 0.0;
             let mut exit_exec = ExecutionPriceResult {
                 executed_price: 0.0,
@@ -252,7 +262,6 @@ pub fn run_backtest(
                 slippage_points: 0.0,
             };
             let mut gap_rule_applied = false;
-
             match pos.order.direction {
                 Direction::Long => {
                     let sl_hit = pos.order.sl_price.is_some_and(|sl| candle.low <= sl);
@@ -284,6 +293,7 @@ pub fn run_backtest(
                             };
                         }
                         closed = true;
+                        exit_reason = ExitReason::SlHit.as_str();
                     } else if tp_hit {
                         let tp = pos.order.tp_price.unwrap_or(0.0);
                         requested_exit = tp;
@@ -309,6 +319,7 @@ pub fn run_backtest(
                             };
                         }
                         closed = true;
+                        exit_reason = ExitReason::TpHit.as_str();
                     }
                 }
                 Direction::Short => {
@@ -347,6 +358,7 @@ pub fn run_backtest(
                             };
                         }
                         closed = true;
+                        exit_reason = ExitReason::SlHit.as_str();
                     } else if tp_hit {
                         let tp = pos.order.tp_price.unwrap_or(0.0);
                         // Short exits by buying back at Ask price (market_exit = candle.open + spread_usd).
@@ -378,7 +390,68 @@ pub fn run_backtest(
                             };
                         }
                         closed = true;
+                        exit_reason = ExitReason::TpHit.as_str();
                     }
+                }
+            }
+
+            // Step 2 (Layer 5): Regime Invalidation - Emergency risk priority
+            if !closed {
+                match pos.order.direction {
+                    Direction::Long => {
+                        if candle.regime.as_deref() == Some("TRENDING_BEARISH") {
+                            requested_exit = candle.open;
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: candle.open,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                            exit_reason = ExitReason::RegimeInvalidation.as_str();
+                            closed = true;
+                        }
+                    }
+                    Direction::Short => {
+                        if candle.regime.as_deref() == Some("TRENDING_BULLISH") {
+                            let target_exit = candle.open + pos.spread_usd;
+                            requested_exit = target_exit;
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: target_exit,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                            exit_reason = ExitReason::RegimeInvalidation.as_str();
+                            closed = true;
+                        }
+                    }
+                }
+            }
+
+            // Step 3 (Layer 4): Time Invalidation
+            if !closed {
+                let entry_candle_dt = parse_utc_timestamp(&pos.entry_candle_timestamp_utc)?;
+                let holding_seconds = candle_dt.signed_duration_since(entry_candle_dt).num_seconds();
+                if holding_seconds >= config.max_holding_seconds as i64 {
+                    match pos.order.direction {
+                        Direction::Long => {
+                            requested_exit = candle.close;
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: candle.close,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
+                        Direction::Short => {
+                            let target_exit = candle.close + pos.spread_usd;
+                            requested_exit = target_exit;
+                            exit_exec = ExecutionPriceResult {
+                                executed_price: target_exit,
+                                slippage_usd: 0.0,
+                                slippage_points: 0.0,
+                            };
+                        }
+                    }
+                    exit_reason = ExitReason::TimeInvalidation.as_str();
+                    closed = true;
                 }
             }
 
@@ -394,6 +467,7 @@ pub fn run_backtest(
                     requested_exit,
                     exit_exec,
                     pos.spread_usd,
+                    exit_reason,
                     stop_level_checked,
                     gap_rule_applied,
                     config,
@@ -492,6 +566,7 @@ pub fn run_backtest(
                             order: order.clone(),
                             entry_exec,
                             spread_usd,
+                            entry_candle_timestamp_utc: candle.timestamp_utc.clone(),
                         });
                         order_idx += 1;
                         break;

@@ -32,9 +32,10 @@ def _make_candle(
     low_price: float,
     close_price: float,
     volume: int = 100,
+    regime: str | None = None,
 ) -> CandleDict:
     """Helper to construct a typed CandleDict."""
-    return {
+    c: CandleDict = {
         "timestamp_utc": timestamp_utc,
         "open": open_price,
         "high": high_price,
@@ -42,6 +43,9 @@ def _make_candle(
         "close": close_price,
         "tick_volume": volume,
     }
+    if regime is not None:
+        c["regime"] = regime
+    return c
 
 
 @pytest.fixture
@@ -501,3 +505,129 @@ def test_stale_orders_logged_to_blocked_signals_db(temp_db: DatabaseManager) -> 
     assert abs(blocked_row["would_be_entry_price"] - 2740.00) < 1e-4
     assert "order-stale-1" in (blocked_row["details"] or "")
     assert blocked_row["timestamp_utc"] == "2026-01-01T10:30:00Z"
+
+
+def test_backtest_runner_propagates_exit_reason_and_regime() -> None:
+    """REQ-RSK-005 & REQ-ING-002: BacktestRunner propagates exit_reason and supports regime tracking."""
+    runner = BacktestRunner()
+
+    # 1. Standard SL and TP exit reasons
+    candles_sltp = [
+        _make_candle("2026-01-01T00:00:00Z", 2740.00, 2742.00, 2739.00, 2740.50),
+        _make_candle("2026-01-01T00:01:00Z", 2741.00, 2746.00, 2740.50, 2745.50),  # hits TP 2745
+        _make_candle("2026-01-01T00:02:00Z", 2745.00, 2746.00, 2744.00, 2745.00),
+        _make_candle("2026-01-01T00:03:00Z", 2745.00, 2745.50, 2739.00, 2739.50),  # hits SL 2740
+    ]
+    orders_sltp: list[OrderDict] = [
+        {
+            "id": "order-tp",
+            "direction": "LONG",
+            "requested_price": 2740.00,
+            "lot_size": 0.05,
+            "sl_price": 2735.00,
+            "tp_price": 2745.00,
+            "signal_timestamp_utc": "2026-01-01T00:00:00Z",
+            "validity_window_seconds": 900,
+        },
+        {
+            "id": "order-sl",
+            "direction": "LONG",
+            "requested_price": 2745.00,
+            "lot_size": 0.05,
+            "sl_price": 2740.00,
+            "tp_price": 2755.00,
+            "signal_timestamp_utc": "2026-01-01T00:02:00Z",
+            "validity_window_seconds": 900,
+        },
+    ]
+    report_sltp = runner.run(candles=candles_sltp, orders=orders_sltp, run_mc=False)
+    assert len(report_sltp.trades) == 2
+    assert report_sltp.trades[0]["exit_reason"] == "tp_hit"
+    assert report_sltp.trades[1]["exit_reason"] == "sl_hit"
+
+    # 2. Time Invalidation
+    candles_time = [
+        _make_candle("2026-01-01T10:00:00Z", 2740.00, 2741.00, 2739.00, 2740.00),
+        _make_candle("2026-01-01T11:00:00Z", 2740.00, 2741.00, 2739.00, 2740.00),
+        _make_candle("2026-01-01T12:00:00Z", 2740.00, 2741.00, 2739.00, 2740.50),  # 7200s elapsed
+    ]
+    orders_time: list[OrderDict] = [
+        {
+            "id": "order-time-inv",
+            "direction": "LONG",
+            "requested_price": 2740.00,
+            "lot_size": 0.1,
+            "sl_price": 2730.00,
+            "tp_price": 2750.00,
+            "signal_timestamp_utc": "2026-01-01T10:00:00Z",
+            "validity_window_seconds": 300,
+        }
+    ]
+    config_time: BacktestConfigDict = {"max_holding_seconds": 7200}
+    report_time = runner.run(
+        candles=candles_time, orders=orders_time, config=config_time, run_mc=False
+    )
+    assert len(report_time.trades) == 1
+    assert report_time.trades[0]["exit_reason"] == "time_invalidation"
+    assert abs(report_time.trades[0]["executed_exit"] - 2740.50) < 1e-4
+
+    # 3. Regime Invalidation at H4 Boundary
+    candles_regime = [
+        _make_candle(
+            "2026-01-01T08:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            regime="TRENDING_BULLISH",
+        ),
+        _make_candle(
+            "2026-01-01T12:00:00Z",
+            2742.00,
+            2743.00,
+            2738.00,
+            2739.00,
+            regime="TRENDING_BEARISH",
+        ),
+    ]
+    orders_regime: list[OrderDict] = [
+        {
+            "id": "order-regime-inv",
+            "direction": "LONG",
+            "requested_price": 2740.00,
+            "lot_size": 0.1,
+            "sl_price": 2730.00,
+            "tp_price": 2750.00,
+            "signal_timestamp_utc": "2026-01-01T08:00:00Z",
+            "validity_window_seconds": 300,
+        }
+    ]
+    config_regime: BacktestConfigDict = {"max_holding_seconds": 14400}
+    report_regime = runner.run(
+        candles=candles_regime, orders=orders_regime, config=config_regime, run_mc=False
+    )
+    assert len(report_regime.trades) == 1
+    assert report_regime.trades[0]["exit_reason"] == "regime_invalidation"
+    assert abs(report_regime.trades[0]["executed_exit"] - 2742.00) < 1e-4
+
+    # 4. Invalid regime transition boundary raises ValueError
+    candles_invalid = [
+        _make_candle(
+            "2026-01-01T10:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            regime="TRENDING_BULLISH",
+        ),
+        _make_candle(
+            "2026-01-01T10:17:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            regime="TRENDING_BEARISH",
+        ),
+    ]
+    with pytest.raises(ValueError, match="Invalid regime transition"):
+        runner.run(candles=candles_invalid, orders=[], run_mc=False)

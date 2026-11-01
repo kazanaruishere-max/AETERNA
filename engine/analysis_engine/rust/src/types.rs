@@ -18,6 +18,34 @@ impl Direction {
     }
 }
 
+/// Categorical exit reason aligned with db schema SSoT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExitReason {
+    SlHit,
+    TpHit,
+    TrailingHit,
+    PartialClose,
+    TimeInvalidation,
+    RegimeInvalidation,
+    PreRolloverForce,
+    ManualEmergency,
+}
+
+impl ExitReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExitReason::SlHit => "sl_hit",
+            ExitReason::TpHit => "tp_hit",
+            ExitReason::TrailingHit => "trailing_hit",
+            ExitReason::PartialClose => "partial_close",
+            ExitReason::TimeInvalidation => "time_invalidation",
+            ExitReason::RegimeInvalidation => "regime_invalidation",
+            ExitReason::PreRolloverForce => "pre_rollover_force",
+            ExitReason::ManualEmergency => "manual_emergency",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BacktestConfig {
     pub contract_size: f64,
@@ -29,6 +57,7 @@ pub struct BacktestConfig {
     /// Default broker spread in points (e.g. 20.0 points = $0.20 USD = 2.0 pips baseline for Exness Standard XAUUSD).
     /// Used when per-candle spread is unavailable (ASUMSI-M2-07).
     pub default_spread_points: f64,
+    pub max_holding_seconds: u64,
 }
 
 impl Default for BacktestConfig {
@@ -41,6 +70,7 @@ impl Default for BacktestConfig {
             stop_level_points: 300.0,
             slippage_free_points: 15.0,
             default_spread_points: 20.0,
+            max_holding_seconds: 7200,
         }
     }
 }
@@ -131,6 +161,7 @@ pub struct ExecutionAuditRecord {
     pub margin_required_usd: f64,
     pub stop_level_checked: bool,
     pub gap_rule_applied: bool,
+    pub exit_reason: String,
 }
 
 /// Error variants encountered during broker execution rules validation or calculation.
@@ -161,6 +192,7 @@ pub struct Candle {
     pub low: f64,
     pub close: f64,
     pub tick_volume: u64,
+    pub regime: Option<String>,
 }
 
 /// Strategy signal emitted by a trading strategy for backtest execution.

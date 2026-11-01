@@ -26,6 +26,7 @@ pub fn create_audit_record(
     requested_exit: f64,
     exit_exec: ExecutionPriceResult,
     spread_usd: f64,
+    exit_reason: &str,
     stop_level_checked: bool,
     gap_rule_applied: bool,
     config: &BacktestConfig,
@@ -56,6 +57,7 @@ pub fn create_audit_record(
         margin_required_usd: pnl_result.margin_required_usd,
         stop_level_checked,
         gap_rule_applied,
+        exit_reason: exit_reason.to_string(),
     })
 }
 
@@ -75,6 +77,7 @@ pub fn create_audit_record_from_prices(
     executed_exit: f64,
     slippage_exit_usd: f64,
     spread_usd: f64,
+    exit_reason: &str,
     stop_level_checked: bool,
     gap_rule_applied: bool,
     config: &BacktestConfig,
@@ -105,6 +108,7 @@ pub fn create_audit_record_from_prices(
         requested_exit,
         exit_exec,
         spread_usd,
+        exit_reason,
         stop_level_checked,
         gap_rule_applied,
         config,
