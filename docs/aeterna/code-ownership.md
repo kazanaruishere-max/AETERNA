@@ -11,7 +11,8 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/ingestion/python/` | Ingestion data M1 OHLCV dari MT5 & scanning OANDA Book | `aeterna-ingestion` | OMP | B | `TEST-ING-*` |
 | `engine/ingestion/go/` | Ingestion/scheduler berkecepatan tinggi & polling state | `aeterna-ingestion` | OMP | B | `go test ./engine/ingestion/go/...` |
 | `engine/state_machine/` | Evaluasi status trading berbasis EWMA spread & jadwal news | `aeterna-risk` | OMP | A | `TEST-RSK-001`, `TEST-RSK-002` |
-| `engine/risk_gate/` | Watchdog independen Go: evaluasi limit risiko & killswitch | `aeterna-risk` | OMP | A | `GATE-M4-HUMAN` |
+| `engine/risk_gate/` | Logika kalkulasi sizing risiko, graduated liquidity & rollover | `aeterna-risk` | OMP | A | `test_liquidity_sizing.py` |
+| `engine/watchdog/` | Watchdog independen Go: evaluasi limit risiko pra-entry & killswitch | `aeterna-risk` | OMP | A | `GATE-M4-HUMAN` (`watchdog_test.go`) |
 | `engine/analysis_engine/rust/` | Engine backtest & kalkulasi kuantitatif performa tinggi | `aeterna-backtest` | OMP | B | `cargo test --all` |
 | `engine/analysis_engine/rust/src/py_bindings.rs` | PyO3 C-Extension FFI bindings & type converters | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
 | `engine/analysis_engine/python/loader.py` | SQLite candle loader (M1 time-series query via `pair`) | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |

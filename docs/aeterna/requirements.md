@@ -47,13 +47,13 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 
 | REQ ID | Sumber | Deskripsi Persyaratan | Target | Disposisi | Task ID | Test / Gate | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| `REQ-RSK-001` | arch §3.3 | State machine berita 4 state: `NORMAL`, `PRE_NEWS_WATCH`, `PAUSED`, `RECOVERY_CHECK` | M4 | PENDING | TASK-M4-01 | `TEST-RSK-001` | BACKLOG |
-| `REQ-RSK-002` | arch §3.3 | Kalkulasi EWMA spread baseline ($\alpha=0.08$) dan Z-Score real-time | M4 | PENDING | TASK-M4-01 | `TEST-RSK-002` | BACKLOG |
-| `REQ-RSK-003` | arch §3.5 | Deteksi likuiditas via Z-score tick volume dan graduated sizing 50% | M4 | PENDING | TASK-M4-02 | `TEST-RSK-003` | BACKLOG |
-| `REQ-RSK-004` | arch §5.1 | Daemon watchdog independen Go untuk validasi limit risiko pra-entry | M4 | PENDING | TASK-M4-03 | `GATE-M4-HUMAN` | BACKLOG |
-| `REQ-RSK-005` | arch §5.2 | Exit Logic 5 lapis (SL/TP, Trailing, Partial, Time 8-bar, Regime) | M4 | PENDING | TASK-M4-04 | `TEST-RSK-004` | BACKLOG |
-| `REQ-RSK-006` | arch §5.2 | Force close seluruh posisi 15 menit sebelum rollover harian bank | M4 | PENDING | TASK-M4-04 | `TEST-RSK-005` | BACKLOG |
-| `REQ-RSK-007` | PRD §3 | Enforce parameter keras: 0.5% risk, 2% daily loss, 10% drawdown killswitch | M4 | PENDING | TASK-M4-03 | `GATE-M4-HUMAN` | BACKLOG |
+| `REQ-RSK-001` | arch §3.3 | State machine berita 4 state: `NORMAL`, `PRE_NEWS_WATCH`, `PAUSED`, `RECOVERY_CHECK` | M4 | COVERED | TASK-M4-01 | `test_state_machine.py` | VERIFIED |
+| `REQ-RSK-002` | arch §3.3 | Kalkulasi EWMA spread baseline ($\alpha=0.08$) dan Z-Score real-time | M4 | COVERED | TASK-M4-01 | `test_state_machine.py` | VERIFIED |
+| `REQ-RSK-003` | arch §3.5 | Deteksi likuiditas via Z-score tick volume dan graduated sizing 50% | M4 | COVERED | TASK-M4-02 | `test_liquidity_sizing.py` | VERIFIED |
+| `REQ-RSK-004` | arch §5.1 | Daemon watchdog independen Go untuk validasi limit risiko pra-entry | M4 | COVERED | TASK-M4-03 | `watchdog_test.go` | VERIFIED |
+| `REQ-RSK-005` | arch §5.2 | Exit Logic 5 lapis (SL/TP, Trailing, Partial, Time 8-bar, Regime) | M4 | COVERED | TASK-M3-02-FIX | `test_engine.rs` | VERIFIED |
+| `REQ-RSK-006` | arch §5.2 | Force close seluruh posisi 15 menit sebelum rollover harian bank | M4 | COVERED | TASK-M4-02 | `test_liquidity_sizing.py` | VERIFIED |
+| `REQ-RSK-007` | PRD §3 | Enforce parameter keras: 0.5% risk, 2% daily loss, 10% drawdown killswitch | M4 | COVERED | TASK-M4-03 | `watchdog_test.go` | VERIFIED |
 
 ---
 
@@ -62,6 +62,7 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 | REQ ID | Sumber | Deskripsi Persyaratan | Target | Disposisi | Task ID | Test / Gate | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | `REQ-EXE-001` | arch §5.3 | Server-Side Attached SL/TP wajib pada setiap pengiriman order Exness | M5 | PENDING | TASK-M5-01 | `GATE-M5-HUMAN` | BACKLOG |
+| `REQ-EXE-006` | arch §3.1 | Thread-safety & mutual exclusion lock (`threading.Lock`) pada `ExnessClient` (P0 Blocker: cegah race condition MT5 C-extension antar-thread candle ingestion vs live spread polling 1Hz) | M5 | MANDATORY_BLOCKER | TASK-M5-01 | `TEST-EXE-LOCK` | BACKLOG |
 | `REQ-EXE-002` | arch §5.3 | Server-side trailing stop via modifikasi order langsung ke broker | M5 | PENDING | TASK-M5-02 | `TEST-EXE-001` | BACKLOG |
 | `REQ-EXE-003` | sec §1 | Manajemen kredensial zero-plaintext via `.env` dan Windows DPAPI | M5 | PENDING | TASK-M5-03 | `TEST-SEC-001` | BACKLOG |
 | `REQ-EXE-004` | sec §3 | Log sanitization filter (redaksi otomatis password, token, akun MT5) | M5 | PENDING | TASK-M5-04 | `TEST-SEC-002` | BACKLOG |
