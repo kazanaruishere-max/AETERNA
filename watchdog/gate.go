@@ -114,6 +114,9 @@ func (g *RiskGate) ValidateOrder(ctx context.Context, req *OrderRequest) (*Order
 		return &OrderResponse{Allowed: false, Reason: "account_bankrupt"}, nil
 	}
 
+	if req.LotSize <= 0.0 || req.EntryPrice <= 0.0 || req.SLPrice <= 0.0 || req.EntryPrice == req.SLPrice {
+		return &OrderResponse{Allowed: false, Reason: "invalid_order_parameters"}, nil
+	}
 	riskUSD := math.Abs(req.EntryPrice-req.SLPrice) * req.LotSize * 100.0
 	riskPct := riskUSD / req.AccountEquity
 	if riskPct > g.cfg.RiskLimitEpsilon {

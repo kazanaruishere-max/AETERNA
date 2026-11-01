@@ -243,6 +243,70 @@ func TestPreEntryBankruptcyReject(t *testing.T) {
 		t.Fatalf("expected bankrupt rejection for negative equity, got: %+v", respNeg)
 	}
 }
+func TestPreEntryInvalidOrderParametersReject(t *testing.T) {
+	dbPath, cleanup := createTestDB(t)
+	defer cleanup()
+
+	roDB, err := OpenReadOnly(dbPath)
+	if err != nil {
+		t.Fatalf("open read-only db: %v", err)
+	}
+	defer roDB.Close()
+
+	cfg := DefaultConfig()
+	gate := NewRiskGate(cfg, roDB)
+
+	testCases := []struct {
+		name string
+		req  *OrderRequest
+	}{
+		{
+			name: "zero lot size",
+			req: &OrderRequest{
+				Pair:          "XAUUSD",
+				Direction:     "LONG",
+				LotSize:       0.0,
+				EntryPrice:    2650.0,
+				SLPrice:       2645.0,
+				AccountEquity: 10000.0,
+			},
+		},
+		{
+			name: "negative lot size",
+			req: &OrderRequest{
+				Pair:          "XAUUSD",
+				Direction:     "LONG",
+				LotSize:       -0.05,
+				EntryPrice:    2650.0,
+				SLPrice:       2645.0,
+				AccountEquity: 10000.0,
+			},
+		},
+		{
+			name: "entry equal to sl",
+			req: &OrderRequest{
+				Pair:          "XAUUSD",
+				Direction:     "LONG",
+				LotSize:       0.10,
+				EntryPrice:    2650.0,
+				SLPrice:       2650.0,
+				AccountEquity: 10000.0,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := gate.ValidateOrder(context.Background(), tc.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Allowed || resp.Reason != "invalid_order_parameters" {
+				t.Fatalf("expected invalid_order_parameters rejection, got: %+v", resp)
+			}
+		})
+	}
+}
 
 func TestPreEntryRiskExceededReject(t *testing.T) {
 	dbPath, cleanup := createTestDB(t)
