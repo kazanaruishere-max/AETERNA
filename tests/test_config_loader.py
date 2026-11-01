@@ -20,6 +20,7 @@ import yaml
 from pydantic import ValidationError
 
 from instruments.xauusd.config.loader import (
+    NewsScheduleConfig,
     XAUUSDConfig,
     load_xauusd_config,
 )
@@ -92,6 +93,14 @@ def test_load_default_parameters_yaml() -> None:
     assert config.state_machine.pre_news_watch_minutes == 10
     assert config.state_machine.ewma_alpha == 0.08
 
+
+    # News Schedule Defaults
+    assert isinstance(config.news_schedule_defaults, NewsScheduleConfig)
+    assert config.news_schedule_defaults.cpi_time_eastern == "08:30:00"
+    assert config.news_schedule_defaults.nfp_time_eastern == "08:30:00"
+    assert config.news_schedule_defaults.gdp_time_eastern == "08:30:00"
+    assert config.news_schedule_defaults.pce_time_eastern == "08:30:00"
+    assert config.news_schedule_defaults.fomc_time_eastern == "14:00:00"
     # Liquidity
     assert config.liquidity.low_liquidity_tick_z_threshold == -2.0
     assert config.liquidity.graduated_sizing_scale == 0.5
@@ -188,6 +197,9 @@ def test_immutability_frozen_config() -> None:
     with pytest.raises((ValidationError, TypeError)):
         config.exit.min_reward_risk_ratio = 3.0  # type: ignore[reportAttributeAccessIssue]
 
+
+    with pytest.raises((ValidationError, TypeError)):
+        config.news_schedule_defaults.cpi_time_eastern = "09:00:00"  # type: ignore[reportAttributeAccessIssue]
 
 def test_corrupt_yaml_raises_error(tmp_path: Path) -> None:
     """Verify corrupt YAML syntax or non-mapping structure raises ValueError."""

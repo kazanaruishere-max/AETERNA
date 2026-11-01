@@ -74,6 +74,17 @@ class StateMachineConfig(BaseModel):
     ewma_alpha: float = Field(gt=0, lt=1.0)
 
 
+class NewsScheduleConfig(BaseModel):
+    """Default release times for major macroeconomic news events (Eastern Time)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    cpi_time_eastern: str
+    nfp_time_eastern: str
+    gdp_time_eastern: str
+    pce_time_eastern: str
+    fomc_time_eastern: str
+
 class LiquidityConfig(BaseModel):
     """Liquidity gating and graduated sizing parameters."""
 
@@ -104,6 +115,7 @@ class XAUUSDConfig(BaseModel):
     risk: RiskConfig
     exit: ExitConfig
     state_machine: StateMachineConfig
+    news_schedule_defaults: NewsScheduleConfig
     liquidity: LiquidityConfig
     research: ResearchConfig
 
