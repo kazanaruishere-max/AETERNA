@@ -13,8 +13,8 @@ use crate::engine::{hours_since_weekly_open, run_backtest};
 use crate::monte_carlo::run_monte_carlo;
 use crate::pnl::calculate_pnl;
 use crate::types::{
-    BacktestConfig, BacktestSummary, Candle, Direction, ExecutionAuditRecord, ExecutionType,
-    MonteCarloResult, Order, PnlResult,
+    BacktestConfig, BacktestSummary, Candle, Direction, DiscardedOrderRecord, ExecutionAuditRecord,
+    ExecutionType, MonteCarloResult, Order, PnlResult,
 };
 
 fn parse_direction(val: &str) -> PyResult<Direction> {
@@ -156,6 +156,16 @@ fn parse_order(dict: &Bound<'_, PyDict>) -> PyResult<Order> {
         None => ExecutionType::Market,
     };
 
+    let sig_ts_item = dict
+        .get_item("signal_timestamp_utc")?
+        .ok_or_else(|| PyValueError::new_err("Order missing 'signal_timestamp_utc'"))?;
+    let signal_timestamp_utc = sig_ts_item.extract::<String>()?;
+
+    let validity_window_seconds = match dict.get_item("validity_window_seconds")? {
+        Some(item) => item.extract::<Option<u64>>()?.unwrap_or(900),
+        None => 900,
+    };
+
     Ok(Order {
         id,
         direction,
@@ -164,7 +174,28 @@ fn parse_order(dict: &Bound<'_, PyDict>) -> PyResult<Order> {
         lot_size,
         sl_price,
         tp_price,
+        signal_timestamp_utc,
+        validity_window_seconds,
     })
+}
+
+fn discarded_order_to_py(py: Python<'_>, d: &DiscardedOrderRecord) -> PyResult<PyObject> {
+    let dict = PyDict::new_bound(py);
+    dict.set_item("order_id", &d.order_id)?;
+    dict.set_item(
+        "direction",
+        match d.direction {
+            Direction::Long => "LONG",
+            Direction::Short => "SHORT",
+        },
+    )?;
+    dict.set_item("signal_timestamp_utc", &d.signal_timestamp_utc)?;
+    dict.set_item("candle_timestamp_utc", &d.candle_timestamp_utc)?;
+    dict.set_item("elapsed_seconds", d.elapsed_seconds)?;
+    dict.set_item("validity_window_seconds", d.validity_window_seconds)?;
+    dict.set_item("requested_price", d.requested_price)?;
+    dict.set_item("reason", &d.reason)?;
+    Ok(dict.into())
 }
 
 fn summary_to_py(py: Python<'_>, s: &BacktestSummary) -> PyResult<PyObject> {
@@ -259,7 +290,7 @@ pub fn py_run_backtest(
     orders: &Bound<'_, PyList>,
     config: Option<&Bound<'_, PyDict>>,
     initial_balance: f64,
-) -> PyResult<(PyObject, PyObject)> {
+) -> PyResult<(PyObject, PyObject, PyObject)> {
     if !initial_balance.is_finite() || initial_balance <= 0.0 {
         return Err(PyValueError::new_err(
             "Initial balance must be positive and finite",
@@ -275,7 +306,7 @@ pub fn py_run_backtest(
         .map(|item| parse_order(item.downcast::<PyDict>()?))
         .collect::<PyResult<Vec<Order>>>()?;
 
-    let (summary, audit_records) = py
+    let (summary, audit_records, discarded_orders) = py
         .allow_threads(|| run_backtest(&parsed_candles, &parsed_orders, &cfg, initial_balance))
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -285,8 +316,13 @@ pub fn py_run_backtest(
         let py_rec = audit_record_to_py(py, record)?;
         py_audit_list.append(py_rec)?;
     }
+    let py_discarded_list = PyList::empty_bound(py);
+    for record in &discarded_orders {
+        let py_rec = discarded_order_to_py(py, record)?;
+        py_discarded_list.append(py_rec)?;
+    }
 
-    Ok((py_summary, py_audit_list.into()))
+    Ok((py_summary, py_audit_list.into(), py_discarded_list.into()))
 }
 
 #[pyfunction]
