@@ -31,8 +31,22 @@ class OrderDict(TypedDict):
     lot_size: float
     sl_price: float | None
     tp_price: float | None
+    signal_timestamp_utc: str
+    validity_window_seconds: NotRequired[int]
     execution_type: NotRequired[str]
 
+
+class DiscardedOrderDict(TypedDict):
+    """Discarded stale order dictionary representation."""
+
+    order_id: str
+    direction: str
+    signal_timestamp_utc: str
+    candle_timestamp_utc: str
+    elapsed_seconds: int
+    validity_window_seconds: int
+    requested_price: float
+    reason: str
 
 class BacktestConfigDict(TypedDict, total=False):
     """Configuration dictionary representation for broker simulation parameters."""
@@ -109,4 +123,5 @@ class BacktestReport:
 
     summary: BacktestSummaryDict
     trades: list[AuditRecordDict]
+    discarded_orders: list[DiscardedOrderDict]
     monte_carlo: MonteCarloResultDict | None = None

@@ -3,7 +3,7 @@
 //! Provides step-by-step chronological simulation per M1 candle, managing active
 //! positions, checking SL/TP with broker slippage rules, and aggregating performance metrics.
 
-use chrono::{Datelike, NaiveDate, Timelike, Weekday};
+use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc, Weekday};
 
 use crate::audit::create_audit_record;
 use crate::exness_rules::{
@@ -11,10 +11,28 @@ use crate::exness_rules::{
 };
 use crate::pnl::calculate_margin;
 use crate::types::{
-    BacktestConfig, BacktestSummary, Candle, Direction, EngineError, ExecutionAuditRecord,
-    ExecutionPriceResult, Order,
+    BacktestConfig, BacktestSummary, Candle, Direction, DiscardedOrderRecord, EngineError,
+    ExecutionAuditRecord, ExecutionPriceResult, Order,
 };
 
+/// Helper to parse ISO-8601 / RFC3339 UTC timestamp.
+fn parse_utc_timestamp(timestamp_utc: &str) -> Result<DateTime<Utc>, EngineError> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp_utc) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(timestamp_utc, "%Y-%m-%dT%H:%M:%SZ") {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(timestamp_utc, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(timestamp_utc, "%Y-%m-%d %H:%M:%S") {
+        return Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
+    }
+    Err(EngineError::CalculationError(format!(
+        "Invalid timestamp format: {timestamp_utc}"
+    )))
+}
 /// Internal tracking state for an open position during simulation.
 #[derive(Debug, Clone, PartialEq)]
 struct ActivePosition {
@@ -163,7 +181,7 @@ pub fn run_backtest(
     orders: &[Order],
     config: &BacktestConfig,
     initial_balance: f64,
-) -> Result<(BacktestSummary, Vec<ExecutionAuditRecord>), EngineError> {
+) -> Result<(BacktestSummary, Vec<ExecutionAuditRecord>, Vec<DiscardedOrderRecord>), EngineError> {
     if !initial_balance.is_finite() || initial_balance <= 0.0 {
         return Err(EngineError::CalculationError(
             "Initial balance must be positive and finite".to_string(),
@@ -174,7 +192,31 @@ pub fn run_backtest(
     for candle in candles {
         validate_candle(candle)?;
     }
+    for w in candles.windows(2) {
+        let prev_dt = parse_utc_timestamp(&w[0].timestamp_utc)?;
+        let curr_dt = parse_utc_timestamp(&w[1].timestamp_utc)?;
+        if curr_dt < prev_dt {
+            return Err(EngineError::CalculationError(format!(
+                "Candles must be strictly non-decreasing in time: {} < {}",
+                w[1].timestamp_utc, w[0].timestamp_utc
+            )));
+        }
+    }
 
+    // 2. Validate ascending orders
+    for order in orders {
+        parse_utc_timestamp(&order.signal_timestamp_utc)?;
+    }
+    for w in orders.windows(2) {
+        let prev_dt = parse_utc_timestamp(&w[0].signal_timestamp_utc)?;
+        let curr_dt = parse_utc_timestamp(&w[1].signal_timestamp_utc)?;
+        if curr_dt < prev_dt {
+            return Err(EngineError::CalculationError(format!(
+                "Orders must be strictly ordered ascending by signal_timestamp_utc: {} < {}",
+                w[1].signal_timestamp_utc, w[0].signal_timestamp_utc
+            )));
+        }
+    }
     let mut current_balance = initial_balance;
     let mut peak_balance = initial_balance;
     let mut max_drawdown_usd = 0.0;
@@ -183,6 +225,7 @@ pub fn run_backtest(
     let mut active_position: Option<ActivePosition> = None;
     let mut order_idx = 0;
     let mut audit_records: Vec<ExecutionAuditRecord> = Vec::new();
+    let mut discarded_orders: Vec<DiscardedOrderRecord> = Vec::new();
 
     let mut win_trades = 0;
     let mut loss_trades = 0;
@@ -194,6 +237,7 @@ pub fn run_backtest(
     let spread_usd = config.default_spread_points * config.point_size;
 
     for candle in candles {
+        let candle_dt = parse_utc_timestamp(&candle.timestamp_utc)?;
         let mut position_closed_this_bar = false;
         let hours_since_open = hours_since_weekly_open(&candle.timestamp_utc)?;
         let in_gap_window = hours_since_open < 3.0;
@@ -395,38 +439,66 @@ pub fn run_backtest(
         }
 
         // Step 4: Open new order from queue if no active position
-        if !position_closed_this_bar && active_position.is_none() && order_idx < orders.len() {
-            let order = &orders[order_idx];
-            validate_order_stop_level(order, config)?;
+        if !position_closed_this_bar && active_position.is_none() {
+            while order_idx < orders.len() {
+                let order = &orders[order_idx];
+                let signal_dt = parse_utc_timestamp(&order.signal_timestamp_utc)?;
+                let elapsed_seconds = candle_dt.signed_duration_since(signal_dt).num_seconds();
 
-            // Spread modeling (ASUMSI-M2-07):
-            // Long enters at Ask (open + spread_usd), Short enters at Bid (open)
-            let market_entry = match order.direction {
-                Direction::Long => candle.open + spread_usd,
-                Direction::Short => candle.open,
-            };
+                if elapsed_seconds < 0 {
+                    // Skenario 1: Candle occurs BEFORE signal (warm-up / future order)
+                    break;
+                } else if elapsed_seconds > order.validity_window_seconds as i64 {
+                    // Skenario 2: Stale signal expired
+                    discarded_orders.push(DiscardedOrderRecord {
+                        order_id: order.id.clone(),
+                        direction: order.direction,
+                        signal_timestamp_utc: order.signal_timestamp_utc.clone(),
+                        candle_timestamp_utc: candle.timestamp_utc.clone(),
+                        elapsed_seconds,
+                        validity_window_seconds: order.validity_window_seconds,
+                        requested_price: order.requested_price,
+                        reason: "stale_signal_expired".to_string(),
+                    });
+                    order_idx += 1;
+                    continue;
+                } else {
+                    // Skenario 3: Fresh signal (0 <= elapsed_seconds <= validity_window_seconds)
+                    validate_order_stop_level(order, config)?;
 
-            let entry_exec = if in_gap_window {
-                apply_weekly_gap_rule(
-                    order.requested_price,
-                    market_entry,
-                    hours_since_open,
-                    config,
-                )
-            } else {
-                apply_slippage_free_range(order.requested_price, market_entry, config)
-            };
+                    // Spread modeling (ASUMSI-M2-07):
+                    // Long enters at Ask (open + spread_usd), Short enters at Bid (open)
+                    let market_entry = match order.direction {
+                        Direction::Long => candle.open + spread_usd,
+                        Direction::Short => candle.open,
+                    };
 
-            let margin_required =
-                calculate_margin(order.lot_size, entry_exec.executed_price, config)?;
+                    let entry_exec = if in_gap_window {
+                        apply_weekly_gap_rule(
+                            order.requested_price,
+                            market_entry,
+                            hours_since_open,
+                            config,
+                        )
+                    } else {
+                        apply_slippage_free_range(order.requested_price, market_entry, config)
+                    };
 
-            if current_balance >= margin_required {
-                active_position = Some(ActivePosition {
-                    order: order.clone(),
-                    entry_exec,
-                    spread_usd,
-                });
-                order_idx += 1;
+                    let margin_required =
+                        calculate_margin(order.lot_size, entry_exec.executed_price, config)?;
+
+                    if current_balance >= margin_required {
+                        active_position = Some(ActivePosition {
+                            order: order.clone(),
+                            entry_exec,
+                            spread_usd,
+                        });
+                        order_idx += 1;
+                        break;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -459,5 +531,5 @@ pub fn run_backtest(
         total_slippage_cost_usd,
     };
 
-    Ok((summary, audit_records))
+    Ok((summary, audit_records, discarded_orders))
 }

@@ -307,6 +307,8 @@ fn test_order_and_stop_level_helper() -> Result<(), BrokerRuleError> {
         lot_size: 0.10,
         sl_price: Some(2735.00),
         tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T00:00:00Z".to_string(),
+        validity_window_seconds: 900,
     };
     validate_order_stop_level(&valid_order, &config)?;
 
@@ -318,6 +320,8 @@ fn test_order_and_stop_level_helper() -> Result<(), BrokerRuleError> {
         lot_size: 0.10,
         sl_price: Some(2739.00), // distance $1.00 < $3.00
         tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T00:00:00Z".to_string(),
+        validity_window_seconds: 900,
     };
     assert_eq!(
         validate_order_stop_level(&invalid_order, &config),

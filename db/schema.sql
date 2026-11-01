@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS blocked_signals (
     reason_blocked TEXT NOT NULL CHECK (reason_blocked IN (
         'risk_gate_daily_loss', 'risk_gate_max_dd', 
         'state_machine_paused', 'state_machine_pre_news', 
-        'low_liquidity_extreme', 'max_concurrent_exceeded'
+        'low_liquidity_extreme', 'max_concurrent_exceeded',
+        'stale_signal_expired'
     )),
     confidence_at_time REAL NOT NULL,
     would_be_entry_price REAL NOT NULL,
