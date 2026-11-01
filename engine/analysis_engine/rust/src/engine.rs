@@ -202,13 +202,13 @@ pub fn run_backtest(
                 w[1].timestamp_utc, w[0].timestamp_utc
             )));
         }
-        if w[1].regime != w[0].regime {
-            if curr_dt.minute() != 0 || curr_dt.second() != 0 || curr_dt.hour() % 4 != 0 {
-                return Err(EngineError::CalculationError(format!(
-                    "Invalid regime transition: H4 regime can only transition at 4-hour boundaries, found at {}",
-                    w[1].timestamp_utc
-                )));
-            }
+        if w[1].regime != w[0].regime
+            && (curr_dt.minute() != 0 || curr_dt.second() != 0 || curr_dt.hour() % 4 != 0)
+        {
+            return Err(EngineError::CalculationError(format!(
+                "Invalid regime transition: H4 regime can only transition at 4-hour boundaries, found at {}",
+                w[1].timestamp_utc
+            )));
         }
     }
 
