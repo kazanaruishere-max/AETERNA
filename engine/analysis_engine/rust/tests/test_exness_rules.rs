@@ -221,11 +221,13 @@ fn test_audit_record_generator_and_ledger() -> Result<(), BrokerRuleError> {
         2745.00,
         exit_exec,
         0.0,
+        "tp_hit",
         true,
         false,
         &config,
     )?;
 
+    assert_eq!(record.exit_reason, "tp_hit");
     // Mathematical parity verification with pnl.rs
     assert!(
         (record.gross_pnl_usd - expected_pnl.gross_pnl_usd).abs() < EPSILON,

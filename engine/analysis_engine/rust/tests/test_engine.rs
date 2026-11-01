@@ -28,6 +28,27 @@ fn make_candle(
         low,
         close,
         tick_volume,
+        regime: None,
+    }
+}
+
+fn make_candle_with_regime(
+    timestamp: &str,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    tick_volume: u64,
+    regime: Option<&str>,
+) -> Candle {
+    Candle {
+        timestamp_utc: timestamp.to_string(),
+        open,
+        high,
+        low,
+        close,
+        tick_volume,
+        regime: regime.map(|s| s.to_string()),
     }
 }
 
@@ -166,11 +187,12 @@ fn test_backtest_loop_sederhana() -> Result<(), EngineError> {
     // Verify first trade was profitable (entry 2740, exit 2745 -> +$25.00)
     assert!(audit_records[0].net_pnl_usd > 0.0);
     assert!((audit_records[0].executed_exit - 2745.00).abs() < EPSILON);
+    assert_eq!(audit_records[0].exit_reason, "tp_hit");
 
     // Verify second trade was a loss (entry 2745, exit 2740 -> -$25.00)
     assert!(audit_records[1].net_pnl_usd < 0.0);
     assert!((audit_records[1].executed_exit - 2740.00).abs() < EPSILON);
-
+    assert_eq!(audit_records[1].exit_reason, "sl_hit");
     Ok(())
 }
 
@@ -1010,6 +1032,204 @@ fn test_order_not_executed_before_signal_time() -> Result<(), EngineError> {
     assert!(discarded_orders.is_empty(), "Future order must not be discarded");
     assert_eq!(audit_records.len(), 1, "Order should be executed when candle reached signal time");
     assert_eq!(audit_records[0].trade_id, "order-future");
+
+    Ok(())
+}
+
+/// Test 13: Time Invalidation Closes Stagnant Position (`REQ-RSK-005`).
+#[test]
+fn test_time_invalidation_closes_stagnant_position() -> Result<(), EngineError> {
+    let config = BacktestConfig {
+        max_holding_seconds: 7200,
+        ..BacktestConfig::default()
+    };
+
+    let candles = vec![
+        make_candle(
+            "2026-01-01T10:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T11:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T12:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.50,
+            100,
+        ),
+    ];
+
+    let orders = vec![Order {
+        id: "order-stagnant-1".to_string(),
+        direction: Direction::Long,
+        execution_type: ExecutionType::Market,
+        requested_price: 2740.00,
+        lot_size: 0.1,
+        sl_price: Some(2730.00),
+        tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(),
+        validity_window_seconds: 300,
+    }];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert!(discarded_orders.is_empty());
+    assert_eq!(audit_records.len(), 1);
+    assert_eq!(audit_records[0].exit_reason, "time_invalidation");
+    assert!((audit_records[0].executed_exit - 2740.50).abs() < EPSILON);
+
+    Ok(())
+}
+
+/// Test 14: Regime Invalidation Closes Counter Position at H4 Boundary (`REQ-RSK-005`).
+#[test]
+fn test_regime_invalidation_closes_counter_position() -> Result<(), EngineError> {
+    let config = BacktestConfig {
+        max_holding_seconds: 14400,
+        ..BacktestConfig::default()
+    };
+
+    let candles = vec![
+        make_candle_with_regime(
+            "2026-01-01T10:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+            Some("TRENDING_BULLISH"),
+        ),
+        make_candle_with_regime(
+            "2026-01-01T12:00:00Z",
+            2742.00,
+            2743.00,
+            2738.00,
+            2739.00,
+            100,
+            Some("TRENDING_BEARISH"),
+        ),
+    ];
+
+    let orders = vec![Order {
+        id: "order-regime-inv-1".to_string(),
+        direction: Direction::Long,
+        execution_type: ExecutionType::Market,
+        requested_price: 2740.00,
+        lot_size: 0.1,
+        sl_price: Some(2730.00),
+        tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(),
+        validity_window_seconds: 300,
+    }];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert!(discarded_orders.is_empty());
+    assert_eq!(audit_records.len(), 1);
+    assert_eq!(audit_records[0].exit_reason, "regime_invalidation");
+    assert!((audit_records[0].executed_exit - 2742.00).abs() < EPSILON);
+
+    Ok(())
+}
+
+/// Test 15: Regime Transition at Invalid Boundary Fails Fast (`REQ-RSK-005`).
+#[test]
+fn test_regime_transition_at_invalid_boundary_fails_fast() {
+    let config = BacktestConfig::default();
+
+    let candles = vec![
+        make_candle_with_regime(
+            "2026-01-01T10:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+            Some("TRENDING_BULLISH"),
+        ),
+        make_candle_with_regime(
+            "2026-01-01T10:17:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+            Some("TRENDING_BEARISH"),
+        ),
+    ];
+
+    let orders = vec![];
+    let result = run_backtest(&candles, &orders, &config, 10_000.0);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Invalid regime transition"),
+        "Expected error message containing 'Invalid regime transition', got: {err_msg}"
+    );
+}
+
+/// Test 16: Regime Invalidation Hierarchy Over Time Invalidation (`REQ-RSK-005`).
+#[test]
+fn test_hierarchy_regime_takes_precedence_over_time_invalidation() -> Result<(), EngineError> {
+    let config = BacktestConfig {
+        max_holding_seconds: 7200,
+        ..BacktestConfig::default()
+    };
+
+    let candles = vec![
+        make_candle_with_regime(
+            "2026-01-01T10:00:00Z",
+            2740.00,
+            2741.00,
+            2739.00,
+            2740.00,
+            100,
+            Some("TRENDING_BULLISH"),
+        ),
+        make_candle_with_regime(
+            "2026-01-01T12:00:00Z",
+            2742.00,
+            2743.00,
+            2738.00,
+            2739.00,
+            100,
+            Some("TRENDING_BEARISH"),
+        ),
+    ];
+
+    let orders = vec![Order {
+        id: "order-hierarchy-1".to_string(),
+        direction: Direction::Long,
+        execution_type: ExecutionType::Market,
+        requested_price: 2740.00,
+        lot_size: 0.1,
+        sl_price: Some(2730.00),
+        tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(),
+        validity_window_seconds: 300,
+    }];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert!(discarded_orders.is_empty());
+    assert_eq!(audit_records.len(), 1);
+    assert_eq!(audit_records[0].exit_reason, "regime_invalidation");
+    assert!((audit_records[0].executed_exit - 2742.00).abs() < EPSILON);
 
     Ok(())
 }
