@@ -19,13 +19,14 @@ from engine.analysis_engine.python.types import (
     BacktestReport,
     BacktestSummaryDict,
     CandleDict,
+    DiscardedOrderDict,
     MonteCarloResultDict,
     OrderDict,
 )
+from engine.models import BlockedSignalRecord, TradeDirection
 from engine.shared.db.database import DatabaseManager
 
 _backtest_module: Any = aeterna_backtest
-
 
 class BacktestRunner:
     """High-level backtest simulation runner wrapping Rust PyO3 engine."""
@@ -47,15 +48,19 @@ class BacktestRunner:
         order_list = list(orders) if orders is not None else []
         summary_raw: Any
         audit_records_raw: Any
-        summary_raw, audit_records_raw = _backtest_module.py_run_backtest(
-            list(candles),
-            order_list,
-            config,
-            initial_balance,
+        discarded_orders_raw: Any
+        summary_raw, audit_records_raw, discarded_orders_raw = (
+            _backtest_module.py_run_backtest(
+                list(candles),
+                order_list,
+                config,
+                initial_balance,
+            )
         )
 
         summary = cast(BacktestSummaryDict, summary_raw)
         audit_records = cast(list[AuditRecordDict], audit_records_raw)
+        discarded_orders = cast(list[DiscardedOrderDict], discarded_orders_raw)
 
         mc_result: MonteCarloResultDict | None = None
         if run_mc and len(audit_records) > 0:
@@ -70,6 +75,7 @@ class BacktestRunner:
         return BacktestReport(
             summary=summary,
             trades=audit_records,
+            discarded_orders=discarded_orders,
             monte_carlo=mc_result,
         )
 
@@ -110,7 +116,7 @@ class BacktestRunner:
                 f"BacktestRunner failed to load candles due to database lock/timeout: {exc}"
             ) from exc
 
-        return self.run(
+        report = self.run(
             candles=candles,
             orders=orders,
             config=config,
@@ -119,3 +125,25 @@ class BacktestRunner:
             mc_simulations=mc_simulations,
             mc_seed=mc_seed,
         )
+
+        if report.discarded_orders:
+            for discarded in report.discarded_orders:
+                self.db_manager.insert_blocked_signal(
+                    BlockedSignalRecord(
+                        timestamp_utc=discarded["candle_timestamp_utc"],
+                        pair=pair,
+                        direction=cast(TradeDirection, discarded["direction"]),
+                        strategy_selected="stale_signal_expired",
+                        reason_blocked="stale_signal_expired",
+                        confidence_at_time=1.0,
+                        would_be_entry_price=discarded["requested_price"],
+                        current_spread=0.0,
+                        details=(
+                            f"order_id={discarded['order_id']}, "
+                            f"elapsed_seconds={discarded['elapsed_seconds']}, "
+                            f"validity_window_seconds={discarded['validity_window_seconds']}"
+                        ),
+                    )
+                )
+
+        return report

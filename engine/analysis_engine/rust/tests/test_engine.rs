@@ -132,6 +132,8 @@ fn test_backtest_loop_sederhana() -> Result<(), EngineError> {
             lot_size: 0.05,
             sl_price: Some(2735.00),
             tp_price: Some(2745.00),
+            signal_timestamp_utc: "2026-01-01T00:00:00Z".to_string(),
+            validity_window_seconds: 900,
         },
         Order {
             id: "order-sl-loss".to_string(),
@@ -141,11 +143,13 @@ fn test_backtest_loop_sederhana() -> Result<(), EngineError> {
             lot_size: 0.05,
             sl_price: Some(2740.00),
             tp_price: Some(2755.00),
+            signal_timestamp_utc: "2026-01-01T00:02:00Z".to_string(),
+            validity_window_seconds: 900,
         },
     ];
 
     let initial_balance = 10_000.0;
-    let (summary, audit_records) = run_backtest(&candles, &orders, &config, initial_balance)?;
+    let (summary, audit_records, _) = run_backtest(&candles, &orders, &config, initial_balance)?;
 
     assert_eq!(summary.total_trades, 2, "Expected exactly 2 total trades");
     assert_eq!(summary.win_trades, 1, "Expected exactly 1 win trade");
@@ -205,10 +209,12 @@ fn test_stop_loss_hit_with_slippage() -> Result<(), EngineError> {
         lot_size: 0.05,
         sl_price: Some(2735.00),
         tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-01T00:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
     let initial_balance = 10_000.0;
-    let (summary, audit_records) = run_backtest(&candles, &orders, &config, initial_balance)?;
+    let (summary, audit_records, _) = run_backtest(&candles, &orders, &config, initial_balance)?;
 
     assert_eq!(summary.total_trades, 1, "Expected 1 closed trade");
     assert_eq!(audit_records.len(), 1, "Expected 1 audit record");
@@ -314,6 +320,8 @@ fn test_extreme_parameters() {
         lot_size: 0.05,
         sl_price: Some(2735.00),
         tp_price: Some(2745.00),
+        signal_timestamp_utc: "2026-01-01T00:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
     let res = run_backtest(&[invalid_candle], &orders, &config, 10_000.0);
@@ -408,9 +416,11 @@ fn test_weekly_market_open_gap_rule_wired_in_engine() -> Result<(), EngineError>
         lot_size: 0.05,
         sl_price: Some(2735.00),
         tp_price: Some(2750.00),
+        signal_timestamp_utc: "2026-01-04T22:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
-    let (_summary, audit_records) = run_backtest(&gap_candles, &orders, &config, 10_000.0)?;
+    let (_summary, audit_records, _) = run_backtest(&gap_candles, &orders, &config, 10_000.0)?;
     assert_eq!(audit_records.len(), 1);
 
     let record = &audit_records[0];
@@ -477,9 +487,11 @@ fn test_spread_telemetry_and_ask_entry_tracking() -> Result<(), EngineError> {
         lot_size: 0.10,
         sl_price: Some(2730.00),
         tp_price: Some(2745.00),
+        signal_timestamp_utc: "2026-01-07T10:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
-    let (summary, audit_records) = run_backtest(&candles, &orders, &config, 10_000.0)?;
+    let (summary, audit_records, _) = run_backtest(&candles, &orders, &config, 10_000.0)?;
     assert_eq!(summary.total_trades, 1);
     assert_eq!(audit_records.len(), 1);
 
@@ -560,10 +572,12 @@ fn test_short_trade_spread_deduction_and_symmetry() -> Result<(), EngineError> {
         lot_size: 0.10,
         sl_price: Some(2750.00),
         tp_price: Some(2730.00),
+        signal_timestamp_utc: "2026-01-07T10:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
     // Run A: With Spread (0.20 USD)
-    let (summary_with_spread, records_with_spread) = run_backtest(
+    let (summary_with_spread, records_with_spread, _) = run_backtest(
         &candles_win,
         &short_order_win,
         &config_with_spread,
@@ -594,7 +608,7 @@ fn test_short_trade_spread_deduction_and_symmetry() -> Result<(), EngineError> {
     );
 
     // Run B: Zero Spread baseline
-    let (summary_zero_spread, records_zero_spread) = run_backtest(
+    let (summary_zero_spread, records_zero_spread, _) = run_backtest(
         &candles_win,
         &short_order_win,
         &config_zero_spread,
@@ -662,15 +676,17 @@ fn test_short_trade_spread_deduction_and_symmetry() -> Result<(), EngineError> {
         lot_size: 0.10,
         sl_price: Some(2750.00),
         tp_price: Some(2730.00),
+        signal_timestamp_utc: "2026-01-07T10:00:00Z".to_string(),
+        validity_window_seconds: 900,
     }];
 
-    let (loss_summary_with_spread, loss_records_with_spread) = run_backtest(
+    let (loss_summary_with_spread, loss_records_with_spread, _) = run_backtest(
         &candles_loss,
         &short_order_loss,
         &config_with_spread,
         10_000.0,
     )?;
-    let (loss_summary_zero_spread, _) = run_backtest(
+    let (loss_summary_zero_spread, _, _) = run_backtest(
         &candles_loss,
         &short_order_loss,
         &config_zero_spread,
@@ -787,6 +803,213 @@ fn test_weekly_open_dst_summer_and_winter() -> Result<(), EngineError> {
         nov_open.abs() < 1e-4,
         "Nov 1, 2026 22:00 UTC (Winter open) must be 0.0, got {nov_open}"
     );
+
+    Ok(())
+}
+
+/// Test 9: Orders out-of-chronological order fails fast with calculation error.
+#[test]
+fn test_orders_out_of_chronological_order_fails_fast() {
+    let config = BacktestConfig::default();
+    let candles = vec![make_candle(
+        "2026-01-01T10:00:00Z",
+        2740.0,
+        2745.0,
+        2735.0,
+        2742.0,
+        100,
+    )];
+    let orders = vec![
+        Order {
+            id: "order-1".to_string(),
+            direction: Direction::Long,
+            execution_type: ExecutionType::Market,
+            requested_price: 2740.0,
+            lot_size: 0.1,
+            sl_price: Some(2730.0),
+            tp_price: Some(2750.0),
+            signal_timestamp_utc: "2026-01-01T10:15:00Z".to_string(),
+            validity_window_seconds: 900,
+        },
+        Order {
+            id: "order-2".to_string(),
+            direction: Direction::Long,
+            execution_type: ExecutionType::Market,
+            requested_price: 2740.0,
+            lot_size: 0.1,
+            sl_price: Some(2730.0),
+            tp_price: Some(2750.0),
+            signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(),
+            validity_window_seconds: 900,
+        },
+    ];
+
+    let result = run_backtest(&candles, &orders, &config, 10_000.0);
+    assert!(result.is_err(), "Expected error for out-of-order orders");
+    match result {
+        Err(EngineError::CalculationError(msg)) => {
+            assert!(
+                msg.contains("Orders must be strictly ordered ascending by signal_timestamp_utc"),
+                "Expected ascending order error message, got: {msg}"
+            );
+        }
+        other => panic!("Expected EngineError::CalculationError, got: {other:?}"),
+    }
+}
+
+/// Test 10: Stale order is discarded and queue continues to execute next fresh order on same candle.
+#[test]
+fn test_queue_continue_stale_discarded_next_fresh_executed() -> Result<(), EngineError> {
+    let config = BacktestConfig::default();
+    let candles = vec![
+        make_candle(
+            "2026-01-01T10:30:00Z",
+            2740.0,
+            2746.0,
+            2739.0,
+            2745.0,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T10:31:00Z",
+            2745.0,
+            2755.0,
+            2744.0,
+            2752.0,
+            100,
+        ), // Hits TP 2750
+    ];
+    let orders = vec![
+        Order {
+            id: "order-stale".to_string(),
+            direction: Direction::Long,
+            execution_type: ExecutionType::Market,
+            requested_price: 2740.0,
+            lot_size: 0.1,
+            sl_price: Some(2730.0),
+            tp_price: Some(2750.0),
+            signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(), // 1800s elapsed > 900s
+            validity_window_seconds: 900,
+        },
+        Order {
+            id: "order-fresh".to_string(),
+            direction: Direction::Long,
+            execution_type: ExecutionType::Market,
+            requested_price: 2740.0,
+            lot_size: 0.1,
+            sl_price: Some(2730.0),
+            tp_price: Some(2750.0),
+            signal_timestamp_utc: "2026-01-01T10:25:00Z".to_string(), // 300s elapsed <= 900s
+            validity_window_seconds: 900,
+        },
+    ];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert_eq!(discarded_orders.len(), 1, "Expected 1 discarded stale order");
+    assert_eq!(discarded_orders[0].order_id, "order-stale");
+    assert_eq!(discarded_orders[0].reason, "stale_signal_expired");
+    assert_eq!(discarded_orders[0].elapsed_seconds, 1800);
+
+    assert_eq!(audit_records.len(), 1, "Expected 1 executed trade from fresh order");
+    assert_eq!(audit_records[0].trade_id, "order-fresh");
+
+    Ok(())
+}
+
+/// Test 11: Order executed exactly at the validity window boundary (elapsed == 900s).
+#[test]
+fn test_order_executed_exactly_at_validity_boundary() -> Result<(), EngineError> {
+    let config = BacktestConfig::default();
+    let candles = vec![
+        make_candle(
+            "2026-01-01T10:15:00Z",
+            2740.0,
+            2746.0,
+            2739.0,
+            2745.0,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T10:16:00Z",
+            2745.0,
+            2755.0,
+            2744.0,
+            2752.0,
+            100,
+        ),
+    ];
+    let orders = vec![Order {
+        id: "order-boundary".to_string(),
+        direction: Direction::Long,
+        execution_type: ExecutionType::Market,
+        requested_price: 2740.0,
+        lot_size: 0.1,
+        sl_price: Some(2730.0),
+        tp_price: Some(2750.0),
+        signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(), // 10:15 - 10:00 = 900s exactly == 900s
+        validity_window_seconds: 900,
+    }];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert_eq!(discarded_orders.len(), 0, "Boundary order must NOT be discarded");
+    assert_eq!(audit_records.len(), 1, "Boundary order must be executed");
+    assert_eq!(audit_records[0].trade_id, "order-boundary");
+
+    Ok(())
+}
+
+/// Test 12: Candle before signal time skips order without discarding; executed when candle reaches signal.
+#[test]
+fn test_order_not_executed_before_signal_time() -> Result<(), EngineError> {
+    let config = BacktestConfig::default();
+    let candles = vec![
+        make_candle(
+            "2026-01-01T09:45:00Z", // Candle before signal (elapsed = -900s)
+            2740.0,
+            2742.0,
+            2738.0,
+            2741.0,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T10:00:00Z", // Candle at signal (elapsed = 0s) -> opens order
+            2740.0,
+            2742.0,
+            2739.0,
+            2741.0,
+            100,
+        ),
+        make_candle(
+            "2026-01-01T10:01:00Z", // Candle hits TP 2750
+            2741.0,
+            2755.0,
+            2740.0,
+            2752.0,
+            100,
+        ),
+    ];
+    let orders = vec![Order {
+        id: "order-future".to_string(),
+        direction: Direction::Long,
+        execution_type: ExecutionType::Market,
+        requested_price: 2740.0,
+        lot_size: 0.1,
+        sl_price: Some(2730.0),
+        tp_price: Some(2750.0),
+        signal_timestamp_utc: "2026-01-01T10:00:00Z".to_string(),
+        validity_window_seconds: 900,
+    }];
+
+    let (_summary, audit_records, discarded_orders) =
+        run_backtest(&candles, &orders, &config, 10_000.0)?;
+
+    assert!(discarded_orders.is_empty(), "Future order must not be discarded");
+    assert_eq!(audit_records.len(), 1, "Order should be executed when candle reached signal time");
+    assert_eq!(audit_records[0].trade_id, "order-future");
 
     Ok(())
 }

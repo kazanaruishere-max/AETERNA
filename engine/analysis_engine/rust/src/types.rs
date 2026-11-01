@@ -88,6 +88,20 @@ pub struct Order {
     pub lot_size: f64,
     pub sl_price: Option<f64>,
     pub tp_price: Option<f64>,
+    pub signal_timestamp_utc: String,
+    pub validity_window_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedOrderRecord {
+    pub order_id: String,
+    pub direction: Direction,
+    pub signal_timestamp_utc: String,
+    pub candle_timestamp_utc: String,
+    pub elapsed_seconds: i64,
+    pub validity_window_seconds: u64,
+    pub requested_price: f64,
+    pub reason: String,
 }
 
 /// Result of applying broker execution rules (slippage, gap rule).

@@ -33,6 +33,7 @@ BlockedReason = Literal[
     "state_machine_pre_news",
     "low_liquidity_extreme",
     "max_concurrent_exceeded",
+    "stale_signal_expired",
 ]
 ModelStatus = Literal["candidate", "active", "archived", "rejected"]
 

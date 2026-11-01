@@ -247,6 +247,7 @@ def test_end_to_end_backtest_with_sqlite_data(temp_db: DatabaseManager) -> None:
             "lot_size": 0.10,
             "sl_price": 2735.00,
             "tp_price": 2745.00,
+            "signal_timestamp_utc": "2026-01-01T00:00:00Z",
         },
         {
             "id": "order-sl-loss",
@@ -255,6 +256,7 @@ def test_end_to_end_backtest_with_sqlite_data(temp_db: DatabaseManager) -> None:
             "lot_size": 0.10,
             "sl_price": 2740.00,
             "tp_price": 2755.00,
+            "signal_timestamp_utc": "2026-01-01T00:02:00Z",
         },
     ]
 
@@ -294,9 +296,9 @@ def test_short_and_long_symmetry_via_python() -> None:
             "lot_size": 0.10,
             "sl_price": 2750.00,
             "tp_price": 2730.00,
+            "signal_timestamp_utc": "2026-01-07T10:00:00Z",
         }
     ]
-
     runner = BacktestRunner()
 
     # Run A: with standard spread (20.0 points = $0.20 USD)
@@ -395,6 +397,7 @@ def test_pyo3_boundary_validation_raises_value_error() -> None:
             "lot_size": 0.10,
             "sl_price": None,
             "tp_price": None,
+            "signal_timestamp_utc": "2026-01-01T00:00:00Z",
         }
     ]
     with pytest.raises(ValueError):
@@ -428,3 +431,73 @@ def test_hours_since_weekly_open_dst() -> None:
         "2026-01-05T00:00:00Z"
     )
     assert abs(winter_hours - 2.0) < 1e-4
+
+
+def test_stale_orders_logged_to_blocked_signals_db(temp_db: DatabaseManager) -> None:
+    """REQ-ING-002: Stale orders beyond validity window are logged to blocked_signals in SQLite."""
+    candle_seed = [
+        (
+            "XAUUSD",
+            "M1",
+            "2026-01-01T10:30:00Z",
+            "exness_mt5",
+            2740.0,
+            2745.0,
+            2738.0,
+            2742.0,
+            100,
+        )
+    ]
+    with temp_db.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO market_candles (pair, timeframe, timestamp_utc, source, open, high, low, close, tick_volume)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            candle_seed,
+        )
+
+    stale_order: list[OrderDict] = [
+        {
+            "id": "order-stale-1",
+            "direction": "LONG",
+            "requested_price": 2740.00,
+            "lot_size": 0.10,
+            "sl_price": 2730.00,
+            "tp_price": 2750.00,
+            "signal_timestamp_utc": "2026-01-01T10:00:00Z",  # 1800s elapsed > 900s validity window
+            "validity_window_seconds": 900,
+        }
+    ]
+
+    runner = BacktestRunner(db_manager=temp_db)
+    report = runner.run_from_db(
+        pair="XAUUSD",
+        timeframe="M1",
+        source="exness_mt5",
+        orders=stale_order,
+        run_mc=False,
+    )
+
+    assert len(report.discarded_orders) == 1
+    discarded = report.discarded_orders[0]
+    assert discarded["order_id"] == "order-stale-1"
+    assert discarded["reason"] == "stale_signal_expired"
+    assert discarded["elapsed_seconds"] == 1800
+    assert report.summary["total_trades"] == 0
+
+    # Verify row inserted into SQLite blocked_signals table
+    with temp_db.get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM blocked_signals WHERE reason_blocked = 'stale_signal_expired';"
+        )
+        rows = cursor.fetchall()
+
+    assert len(rows) == 1
+    blocked_row = dict(rows[0])
+    assert blocked_row["reason_blocked"] == "stale_signal_expired"
+    assert blocked_row["pair"] == "XAUUSD"
+    assert blocked_row["direction"] == "LONG"
+    assert abs(blocked_row["would_be_entry_price"] - 2740.00) < 1e-4
+    assert "order-stale-1" in (blocked_row["details"] or "")
+    assert blocked_row["timestamp_utc"] == "2026-01-01T10:30:00Z"
