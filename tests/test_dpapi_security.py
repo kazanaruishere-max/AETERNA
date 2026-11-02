@@ -1,10 +1,11 @@
-"""Deterministic unit and security tests for Windows DPAPI and SecretString isolation.
+"""Deterministic unit and security tests for Windows DPAPI, Application Entropy, and JIT SecretString.
 
 Validates:
-1. REQ-EXE-003: Native CryptProtectData/CryptUnprotectData isolation.
-2. Absolute SecretString memory masking (zero plain-text leak in repr, str, f-strings, logging).
-3. Encryption/decryption persistence roundtrip and atomic file operations.
-4. Error handling for corrupt ciphertext, empty payloads, and missing files.
+1. REQ-EXE-003: Native CryptProtectData/CryptUnprotectData isolation with Application Entropy.
+2. JIT Decryption: SecretString stores ONLY ciphertext in RAM (no plaintext _value attribute).
+3. Absolute SecretString memory masking (zero plain-text leak in repr, str, f-strings, logging).
+4. Master key / entropy desynchronization handling (DPAPIDesyncError on wrong salt / corrupt key).
+5. Encryption/decryption persistence roundtrip and atomic file operations.
 """
 
 # pyright: reportMissingTypeStubs=false
@@ -12,6 +13,7 @@ Validates:
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownParameterType=false
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -25,6 +27,8 @@ from unittest.mock import patch
 import pytest
 
 from engine.security.dpapi import (
+    DEFAULT_APP_ENTROPY,
+    DPAPIDesyncError,
     DPAPIError,
     SecretString,
     decrypt_dpapi,
@@ -35,10 +39,32 @@ from engine.security.dpapi import (
 from scripts.setup_secrets import run_setup
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
+def test_secret_string_jit_decryption_no_plaintext_in_memory() -> None:
+    """Verify SecretString stores ONLY ciphertext in RAM with zero plaintext attributes."""
+    raw_secret = "UltraSecretProductionPassword2026!"
+    sec = SecretString.from_plaintext(raw_secret)
+
+    # 1. Plaintext _value attribute MUST NOT EXIST
+    assert not hasattr(sec, "_value")
+    assert hasattr(sec, "_cipher_bytes")
+    assert isinstance(sec._cipher_bytes, bytes)
+    assert len(sec._cipher_bytes) > 0
+
+    # 2. Plaintext must NOT appear anywhere in the object dictionary or attribute values
+    for val in vars(sec).values():
+        if isinstance(val, (str, bytes)):
+            assert raw_secret.encode("utf-8") not in (val if isinstance(val, bytes) else val.encode("utf-8"))
+
+    # 3. get_secret_value() must decrypt Just-In-Time (JIT) to return the original plaintext
+    assert sec.get_secret_value() == raw_secret
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_secret_string_masking() -> None:
     """Verify SecretString strictly masks sensitive content in all string representations."""
     raw_secret = "P@ssw0rd_Exness_XAUUSD_2026!"
-    sec = SecretString(raw_secret)
+    sec = SecretString.from_plaintext(raw_secret)
 
     # 1. str() and repr() must return masked string
     assert str(sec) == "***MASKED***"
@@ -62,16 +88,32 @@ def test_secret_string_masking() -> None:
     assert raw_secret not in log_output
     assert "***MASKED***" in log_output
 
-    # 4. Raw value must be accessible explicitly via get_secret_value()
-    assert sec.get_secret_value() == raw_secret
 
-
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_secret_string_immutability() -> None:
     """Verify SecretString is an immutable frozen dataclass."""
-    sec = SecretString("initial_token_123")
+    sec = SecretString.from_plaintext("initial_token_123")
     with pytest.raises(FrozenInstanceError):
         # pyright: ignore[reportAttributeAccessIssue]
-        sec._value = "mutated_token"  # type: ignore[misc]
+        sec._cipher_bytes = b"tampered_cipher_bytes"  # type: ignore[misc]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
+def test_dpapi_application_entropy_isolation() -> None:
+    """Verify application entropy prevents decryption when salt is wrong or missing."""
+    test_payload = b"CRITICAL_FINANCIAL_API_KEY_9999"
+
+    # Encrypt with default salt entropy
+    ciphertext = encrypt_dpapi(test_payload, entropy=DEFAULT_APP_ENTROPY)
+
+    # Decrypt with correct entropy must succeed bit-perfect
+    decrypted = decrypt_dpapi(ciphertext, entropy=DEFAULT_APP_ENTROPY)
+    assert decrypted == test_payload
+
+    # Decrypt with WRONG entropy must fail-fast with DPAPIDesyncError
+    wrong_entropy = b"UNAUTHORIZED_MALICIOUS_APP_SALT"
+    with pytest.raises(DPAPIDesyncError, match="DPAPI master key or entropy desynchronized"):
+        decrypt_dpapi(ciphertext, entropy=wrong_entropy)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
@@ -80,7 +122,6 @@ def test_dpapi_encrypt_decrypt_roundtrip() -> None:
     test_payload = b"AETERNA_SUPER_SECRET_PAYLOAD_XAUUSD_\x00\xff\xfe"
     ciphertext = encrypt_dpapi(test_payload, description="test_crypto")
 
-    # Ciphertext must not match plaintext and must be non-empty
     assert ciphertext != test_payload
     assert len(ciphertext) > len(test_payload)
 
@@ -101,16 +142,16 @@ def test_empty_payload_raises_dpapi_error() -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
-def test_corrupt_ciphertext_raises_dpapi_error() -> None:
-    """Verify corrupt or tampered ciphertext raises DPAPIError."""
+def test_corrupt_ciphertext_raises_dpapi_desync_or_error() -> None:
+    """Verify corrupt or tampered ciphertext raises DPAPIError or DPAPIDesyncError."""
     corrupt_data = b"RANDOM_CORRUPT_CIPHER_BYTES_1234567890"
-    with pytest.raises(DPAPIError, match="CryptUnprotectData failed"):
+    with pytest.raises(DPAPIError):
         decrypt_dpapi(corrupt_data)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_secrets_persistence_roundtrip(tmp_path: Path) -> None:
-    """Verify saving and loading secrets file with automatic SecretString wrapping."""
+    """Verify saving and loading secrets file with JIT SecretString wrapping."""
     target_file = tmp_path / ".secrets.enc"
 
     secrets_to_save = {
@@ -125,7 +166,7 @@ def test_secrets_persistence_roundtrip(tmp_path: Path) -> None:
     save_encrypted_secrets(secrets_to_save, filepath=target_file)
     assert target_file.is_file()
 
-    # File on disk must be encrypted binary, not plaintext JSON
+    # File on disk must be encrypted binary, zero plaintext
     raw_file_content = target_file.read_bytes()
     assert b"MyExnessSecurePassword999" not in raw_file_content
     assert b"1234567890:ABCdefGHIjklMNOpqrsTUVwxyz" not in raw_file_content
@@ -137,9 +178,11 @@ def test_secrets_persistence_roundtrip(tmp_path: Path) -> None:
     assert loaded["telegram_admin_id"] == 99887766
     assert loaded["arbitrary_config"] == "plain_value"
 
-    # Sensitive fields must be wrapped in SecretString
+    # Sensitive fields must be wrapped in JIT SecretString without plaintext attribute
     assert isinstance(loaded["mt5_password"], SecretString)
     assert isinstance(loaded["telegram_bot_token"], SecretString)
+    assert not hasattr(loaded["mt5_password"], "_value")
+    assert not hasattr(loaded["telegram_bot_token"], "_value")
 
     assert str(loaded["mt5_password"]) == "***MASKED***"
     assert loaded["mt5_password"].get_secret_value() == "MyExnessSecurePassword999"

@@ -1,7 +1,9 @@
 """Security and cryptographic isolation module."""
 
 from engine.security.dpapi import (
+    DEFAULT_APP_ENTROPY,
     DEFAULT_SECRETS_PATH,
+    DPAPIDesyncError,
     DPAPIError,
     SecretString,
     decrypt_dpapi,
@@ -11,7 +13,9 @@ from engine.security.dpapi import (
 )
 
 __all__ = [
+    "DEFAULT_APP_ENTROPY",
     "DEFAULT_SECRETS_PATH",
+    "DPAPIDesyncError",
     "DPAPIError",
     "SecretString",
     "decrypt_dpapi",

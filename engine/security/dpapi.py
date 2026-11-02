@@ -1,11 +1,12 @@
 """Windows Data Protection API (DPAPI) Native Cryptographic Isolation.
 
 Module: engine.security.dpapi
-Responsibility: Zero-plaintext credential encryption and memory sanitization.
+Responsibility: Zero-plaintext credential encryption and JIT memory sanitization.
 Enforces:
 - REQ-EXE-003: Native CryptProtectData/CryptUnprotectData via ctypes (Crypt32.dll).
-- Absolute CurrentUser scope (CRYPTPROTECT_UI_FORBIDDEN, no LocalMachine flag).
-- SecretString with masked __repr__ and __str__ to prevent accidental leaks.
+- Absolute CurrentUser scope with injected application entropy (pOptionalEntropy).
+- SecretString storing only ciphertext in RAM with Just-In-Time (JIT) DPAPI decryption.
+- Custom DPAPIDesyncError on master key or MAC/entropy desync.
 Owner: aeterna-security
 Tier: Tier A
 """
@@ -31,12 +32,17 @@ logger = logging.getLogger("aeterna.security.dpapi")
 
 DEFAULT_SECRETS_PATH = Path("data/.secrets.enc")
 
-# Windows DPAPI Constants
+# Windows DPAPI Constants & Application Salt Entropy
 CRYPTPROTECT_UI_FORBIDDEN = 0x1
+DEFAULT_APP_ENTROPY: bytes = b"AETERNA_QUANT_XAUUSD_SECURE_SALT"
 
 
 class DPAPIError(Exception):
     """Raised when Windows DPAPI encryption or decryption fails."""
+
+
+class DPAPIDesyncError(DPAPIError):
+    """Raised when DPAPI master key or entropy is desynchronized (e.g. password changed, bad MAC)."""
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -50,13 +56,16 @@ class DATA_BLOB(ctypes.Structure):
 
 @dataclass(frozen=True)
 class SecretString:
-    """Secure memory wrapper around sensitive credential strings.
+    """Secure memory wrapper storing ONLY ciphertext bytes in RAM.
 
-    Overrides __repr__ and __str__ to guarantee zero leakage in logs,
-    tracebacks, or console print statements.
+    Plaintext is NEVER stored in self attributes.
+    Overrides __repr__ and __str__ to guarantee zero plain-text leakage in logs.
+    get_secret_value() decrypts ciphertext Just-In-Time (JIT) via DPAPI
+    at the exact moment of authentication.
     """
 
-    _value: str
+    _cipher_bytes: bytes
+    _entropy: bytes = DEFAULT_APP_ENTROPY
 
     def __repr__(self) -> str:
         return "***MASKED***"
@@ -65,8 +74,17 @@ class SecretString:
         return "***MASKED***"
 
     def get_secret_value(self) -> str:
-        """Expose raw sensitive value only at the exact moment of authentication."""
-        return self._value
+        """Decrypt ciphertext Just-In-Time (JIT) and return plaintext string."""
+        raw_bytes = decrypt_dpapi(self._cipher_bytes, entropy=self._entropy)
+        return raw_bytes.decode("utf-8")
+
+    @classmethod
+    def from_plaintext(
+        cls, plaintext: str, entropy: bytes = DEFAULT_APP_ENTROPY
+    ) -> SecretString:
+        """Encrypt plaintext immediately using DPAPI and store only ciphertext."""
+        cipher = encrypt_dpapi(plaintext.encode("utf-8"), entropy=entropy)
+        return cls(_cipher_bytes=cipher, _entropy=entropy)
 
 
 def _check_windows_platform() -> None:
@@ -77,15 +95,20 @@ def _check_windows_platform() -> None:
         )
 
 
-def encrypt_dpapi(data: bytes, description: str = "aeterna_secret") -> bytes:
-    """Encrypt binary data using Windows DPAPI under CurrentUser scope.
+def encrypt_dpapi(
+    data: bytes,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
+    description: str = "aeterna_secret",
+) -> bytes:
+    """Encrypt binary data using Windows DPAPI under CurrentUser scope with application entropy.
 
     Args:
         data: Plaintext bytes to encrypt.
+        entropy: Application salt bytes passed to pOptionalEntropy.
         description: Optional label for the data blob.
 
     Returns:
-        Ciphertext bytes tied strictly to the active Windows user profile.
+        Ciphertext bytes tied strictly to the active Windows user profile and application salt.
     """
     _check_windows_platform()
     if not data:
@@ -98,13 +121,19 @@ def encrypt_dpapi(data: bytes, description: str = "aeterna_secret") -> bytes:
     in_blob = DATA_BLOB(
         len(data), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_char))
     )
+
+    entropy_buffer = ctypes.create_string_buffer(entropy)
+    entropy_blob = DATA_BLOB(
+        len(entropy), ctypes.cast(entropy_buffer, ctypes.POINTER(ctypes.c_char))
+    )
+
     out_blob = DATA_BLOB()
 
     # Scope: CurrentUser (0x1 = CRYPTPROTECT_UI_FORBIDDEN, without 0x4 CRYPTPROTECT_LOCAL_MACHINE)
     success = crypt32.CryptProtectData(
         ctypes.byref(in_blob),
         description,
-        None,
+        ctypes.byref(entropy_blob),
         None,
         None,
         CRYPTPROTECT_UI_FORBIDDEN,
@@ -121,14 +150,22 @@ def encrypt_dpapi(data: bytes, description: str = "aeterna_secret") -> bytes:
         kernel32.LocalFree(out_blob.pbData)
 
 
-def decrypt_dpapi(cipher: bytes) -> bytes:
-    """Decrypt ciphertext using Windows DPAPI under CurrentUser scope.
+def decrypt_dpapi(
+    cipher: bytes,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
+) -> bytes:
+    """Decrypt ciphertext using Windows DPAPI under CurrentUser scope with application entropy.
 
     Args:
         cipher: Encrypted ciphertext bytes.
+        entropy: Application salt bytes passed to pOptionalEntropy.
 
     Returns:
         Original plaintext bytes.
+
+    Raises:
+        DPAPIDesyncError: If master key, OS password, MAC, or entropy is desynchronized.
+        DPAPIError: For general DPAPI operational errors.
     """
     _check_windows_platform()
     if not cipher:
@@ -141,12 +178,18 @@ def decrypt_dpapi(cipher: bytes) -> bytes:
     in_blob = DATA_BLOB(
         len(cipher), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_char))
     )
+
+    entropy_buffer = ctypes.create_string_buffer(entropy)
+    entropy_blob = DATA_BLOB(
+        len(entropy), ctypes.cast(entropy_buffer, ctypes.POINTER(ctypes.c_char))
+    )
+
     out_blob = DATA_BLOB()
 
     success = crypt32.CryptUnprotectData(
         ctypes.byref(in_blob),
         None,
-        None,
+        ctypes.byref(entropy_blob),
         None,
         None,
         CRYPTPROTECT_UI_FORBIDDEN,
@@ -155,6 +198,18 @@ def decrypt_dpapi(cipher: bytes) -> bytes:
     if not success:
         get_last_error = getattr(ctypes, "GetLastError", None)
         err_code = int(get_last_error()) if get_last_error is not None else 0
+
+        # Win32 codes indicating MAC failure, master key invalid, or desynchronized entropy:
+        # 13: ERROR_INVALID_DATA (wrong entropy / MAC failure)
+        # 0x80090006: NTE_BAD_MAC (or signed -2146893818)
+        # 0x8009000B: NTE_BAD_KEY_STATE
+        # 0x80090016: NTE_KEYSET_NOT_DEF
+        desync_codes = {13, 0x80090006, 0x8009000B, 0x80090016, -2146893818}
+        if err_code in desync_codes or (err_code & 0xFFFFFFFF) in {0x80090006, 0x8009000B, 0x80090016}:
+            raise DPAPIDesyncError(
+                f"DPAPI master key or entropy desynchronized (Win32 error: {err_code}, "
+                f"hex: 0x{err_code & 0xFFFFFFFF:x}). Windows user password may have changed or salt mismatch."
+            )
         raise DPAPIError(f"CryptUnprotectData failed with Windows error: {err_code}")
 
     try:
@@ -164,13 +219,16 @@ def decrypt_dpapi(cipher: bytes) -> bytes:
 
 
 def save_encrypted_secrets(
-    secrets: dict[str, Any], filepath: Path | str = DEFAULT_SECRETS_PATH
+    secrets: dict[str, Any],
+    filepath: Path | str = DEFAULT_SECRETS_PATH,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
 ) -> None:
     """Serialize secrets dictionary to JSON, encrypt via DPAPI, and save atomically.
 
     Args:
         secrets: Dictionary of sensitive configuration values.
         filepath: Destination binary file path.
+        entropy: Application salt bytes.
     """
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +242,9 @@ def save_encrypted_secrets(
             serializable[k] = v
 
     raw_json = json.dumps(serializable, ensure_ascii=False).encode("utf-8")
-    cipher_bytes = encrypt_dpapi(raw_json)
+    cipher_bytes = encrypt_dpapi(raw_json, entropy=entropy)
+    del raw_json
+    del serializable
 
     # Atomic write via temporary file
     temp_path = path.with_suffix(".tmp")
@@ -197,14 +257,16 @@ def save_encrypted_secrets(
 
 def load_encrypted_secrets(
     filepath: Path | str = DEFAULT_SECRETS_PATH,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
 ) -> dict[str, Any]:
-    """Read binary secrets file, decrypt via DPAPI, and wrap sensitive fields in SecretString.
+    """Read binary secrets file, decrypt via DPAPI, and wrap sensitive fields in JIT SecretString.
 
     Args:
         filepath: Path to .secrets.enc file.
+        entropy: Application salt bytes.
 
     Returns:
-        Dictionary with sensitive values wrapped in SecretString.
+        Dictionary with sensitive values wrapped in JIT SecretString (only ciphertext in RAM).
     """
     path = Path(filepath)
     if not path.is_file():
@@ -213,16 +275,18 @@ def load_encrypted_secrets(
     with open(path, "rb") as f:
         cipher_bytes = f.read()
 
-    plain_bytes = decrypt_dpapi(cipher_bytes)
+    plain_bytes = decrypt_dpapi(cipher_bytes, entropy=entropy)
     try:
         data = json.loads(plain_bytes.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise DPAPIError(f"Corrupt secrets payload: {exc}") from exc
+    finally:
+        del plain_bytes
 
     if not isinstance(data, dict):
         raise DPAPIError("Decrypted secrets payload must be a JSON dictionary.")
 
-    # Sensitive key names that must be wrapped in SecretString
+    # Sensitive key names that must be wrapped in JIT SecretString
     sensitive_keys = {
         "password",
         "mt5_password",
@@ -235,8 +299,9 @@ def load_encrypted_secrets(
     result: dict[str, Any] = {}
     for k, v in data.items():
         if k in sensitive_keys and isinstance(v, str):
-            result[k] = SecretString(v)
+            result[k] = SecretString.from_plaintext(v, entropy=entropy)
         else:
             result[k] = v
 
+    del data
     return result
