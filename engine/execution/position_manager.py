@@ -10,6 +10,7 @@ Enforces:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import time
@@ -178,7 +179,7 @@ class PositionManager:
         )
         if not mod_res.success:
             logger.warning("BE SL modify failed for %s: withholding partial close", pos.ticket)
-            return pos, mod_res, None
+            return dataclasses.replace(pos, last_modify_time_mono=now), mod_res, None
 
         pos = pos.with_break_even_sl(target_sl, now)
         if pos.current_lot <= 0.01:
@@ -222,6 +223,8 @@ class PositionManager:
         )
         if mod_res.success:
             pos = pos.with_break_even_sl(proposed_sl, now)
+        else:
+            pos = dataclasses.replace(pos, last_modify_time_mono=now)
         return pos, mod_res
 
     def evaluate_trailing_and_scaleout(
