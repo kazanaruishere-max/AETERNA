@@ -111,7 +111,8 @@ def encrypt_dpapi(data: bytes, description: str = "aeterna_secret") -> bytes:
         ctypes.byref(out_blob),
     )
     if not success:
-        err_code = int(ctypes.GetLastError())
+        get_last_error = getattr(ctypes, "GetLastError", None)
+        err_code = int(get_last_error()) if get_last_error is not None else 0
         raise DPAPIError(f"CryptProtectData failed with Windows error: {err_code}")
 
     try:
@@ -152,7 +153,8 @@ def decrypt_dpapi(cipher: bytes) -> bytes:
         ctypes.byref(out_blob),
     )
     if not success:
-        err_code = int(ctypes.GetLastError())
+        get_last_error = getattr(ctypes, "GetLastError", None)
+        err_code = int(get_last_error()) if get_last_error is not None else 0
         raise DPAPIError(f"CryptUnprotectData failed with Windows error: {err_code}")
 
     try:
