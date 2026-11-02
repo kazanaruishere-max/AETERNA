@@ -4,6 +4,8 @@
 !.env.example
 *.key
 *.pem
+*.enc
+data/.secrets.enc
 
 # Local databases and runtime IPC
 *.db
