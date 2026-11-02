@@ -95,13 +95,11 @@ class ExnessBrokerBridge:
     def send_market_order(self, request: OrderRequest) -> OrderExecutionResult:
         """Send a market order with mandatory server-side SL/TP attached."""
         self.validate_order_request(request)
-
-        if not self.client.connected or self.client.mt5 is None:
-            raise ExnessExecutionError("MT5 terminal is not connected.")
-
-        mt5 = self.client.mt5
-
         with self.client.lock:
+            if not self.client.connected or self.client.mt5 is None:
+                raise ExnessExecutionError("MT5 terminal is not connected.")
+
+            mt5 = self.client.mt5
             tick = mt5.symbol_info_tick(request.symbol)
             if tick is None:
                 raise ExnessExecutionError(f"Failed to fetch market tick for {request.symbol}")
