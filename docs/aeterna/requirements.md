@@ -61,12 +61,12 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 
 | REQ ID | Sumber | Deskripsi Persyaratan | Target | Disposisi | Task ID | Test / Gate | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| `REQ-EXE-001` | arch §5.3 | Server-Side Attached SL/TP wajib pada setiap pengiriman order Exness | M5 | PENDING | TASK-M5-01 | `GATE-M5-HUMAN` | BACKLOG |
-| `REQ-EXE-006` | arch §3.1 | Thread-safety & mutual exclusion lock (`threading.Lock`) pada `ExnessClient` (P0 Blocker: cegah race condition MT5 C-extension antar-thread candle ingestion vs live spread polling 1Hz) | M5 | MANDATORY_BLOCKER | TASK-M5-01 | `TEST-EXE-LOCK` | BACKLOG |
-| `REQ-EXE-002` | arch §5.3 | Server-side trailing stop via modifikasi order langsung ke broker | M5 | PENDING | TASK-M5-02 | `TEST-EXE-001` | BACKLOG |
-| `REQ-EXE-003` | sec §1 | Manajemen kredensial zero-plaintext via `.env` dan Windows DPAPI | M5 | PENDING | TASK-M5-03 | `TEST-SEC-001` | BACKLOG |
-| `REQ-EXE-004` | sec §3 | Log sanitization filter (redaksi otomatis password, token, akun MT5) | M5 | PENDING | TASK-M5-04 | `TEST-SEC-002` | BACKLOG |
-| `REQ-EXE-005` | sec §3.3 | Proteksi izin akses Windows ACL (`icacls`) Current User Only pada log dan DB | M5 | PENDING | TASK-M5-04 | `TEST-SEC-003` | BACKLOG |
+| `REQ-EXE-001` | arch §5.3 | Server-Side Attached SL/TP wajib pada setiap pengiriman order Exness | M5 | COVERED | TASK-M5-01 | `test_broker_bridge.py` | VERIFIED |
+| `REQ-EXE-006` | arch §3.1 | Thread-safety & mutual exclusion lock (`threading.Lock`) pada `ExnessClient` (P0 Blocker: cegah race condition MT5 C-extension antar-thread candle ingestion vs live spread polling 1Hz) | M5 | COVERED | TASK-M5-01 | `test_mt5_thread_safety.py` | VERIFIED |
+| `REQ-EXE-002` | arch §5.3 | Server-side trailing stop via modifikasi order langsung ke broker | M5 | COVERED | TASK-M5-02 | `test_position_manager.py` | VERIFIED |
+| `REQ-EXE-003` | sec §1 | Manajemen kredensial zero-plaintext via `.env` dan Windows DPAPI | M5 | COVERED | TASK-M5-03 | `test_dpapi_security.py` | VERIFIED |
+| `REQ-EXE-004` | sec §3 | Log sanitization filter (redaksi otomatis password, token, akun MT5) | M5 | COVERED | TASK-M5-04 | `test_log_sanitizer_acl.py` | VERIFIED |
+| `REQ-EXE-005` | sec §3.3 | Proteksi izin akses Windows ACL (`icacls`) Current User Only pada log dan DB | M5 | COVERED | TASK-M5-04 | `test_log_sanitizer_acl.py` | VERIFIED |
 | `REQ-TEL-001` | sec §2.1 | Telegram Bot dengan whitelist integer `TELEGRAM_ADMIN_ID` (silent drop) | M6 | PENDING | TASK-M6-01 | `TEST-TEL-001` | BACKLOG |
 | `REQ-TEL-002` | sec §2.2 | Ephemeral callback nonce 60 detik untuk pencegahan replay attack | M6 | PENDING | TASK-M6-01 | `TEST-TEL-002` | BACKLOG |
 | `REQ-TEL-003` | sec §2.3 | Two-step confirmation (batas 15s) untuk Killswitch dan Force Close All | M6 | PENDING | TASK-M6-02 | `TEST-TEL-003` | BACKLOG |
