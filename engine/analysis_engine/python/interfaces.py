@@ -65,7 +65,7 @@ class LazyParquetReader(Protocol):
         columns: list[str] | None = None,
     ) -> Iterator[Any]:
         """Yield RecordBatch or DataFrame chunks without loading entire file into memory."""
-        ...
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -82,7 +82,7 @@ class TemporalGateValidator(Protocol):
         Raises:
             ValueError: If max(x_timestamps) >= y_timestamp (lookahead violation).
         """
-        ...
+        raise NotImplementedError
 
 
 class KronosDataset(_BaseIterableDataset):
@@ -161,11 +161,11 @@ class KronosInferenceEngine(Protocol):
 
     def infer_regime(self, context_candles: list[CandleDict]) -> ModelInferenceResult:
         """Infer H4 market regime from 512 context candles with zero external API calls."""
-        ...
+        raise NotImplementedError
 
     def validate_context_window(self, candles: list[CandleDict]) -> bool:
         """Verify that context window contains exactly 512 chronologically ascending candles."""
-        ...
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -174,7 +174,7 @@ class MacroFeatureProvider(Protocol):
 
     def get_latest_macro_features(self) -> MacroFeatures:
         """Retrieve the latest US Real Yield (TIPS 10Y) and DXY proxy readings."""
-        ...
+        raise NotImplementedError
 
     def get_historical_macro_features(
         self,
@@ -182,7 +182,7 @@ class MacroFeatureProvider(Protocol):
         end_utc: str,
     ) -> list[MacroFeatures]:
         """Query time-range of macro observations from SQLite cache."""
-        ...
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -191,7 +191,7 @@ class OandaSentimentProvider(Protocol):
 
     def get_latest_sentiment(self) -> OandaSentimentRatio:
         """Fetch current retail positioning long/short ratios and skew."""
-        ...
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -206,4 +206,4 @@ class StrategyEvaluator(Protocol):
         sentiment: OandaSentimentRatio | None = None,
     ) -> list[Any]:
         """Evaluate strategy entry/exit conditions across multi-timeframe inputs."""
-        ...
+        raise NotImplementedError
