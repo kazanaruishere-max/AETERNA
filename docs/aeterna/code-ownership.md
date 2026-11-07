@@ -18,6 +18,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/analysis_engine/python/loader.py` | SQLite candle loader (M1 time-series query via `pair`) | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
 | `engine/analysis_engine/python/runner.py` | Python backtest orchestrator facade & report builder | `aeterna-backtest` | OMP | B | `pytest tests/analysis/` |
 | `engine/analysis_engine/python/types.py` | TypedDict & dataclass definitions for Python backtest | `aeterna-backtest` | OMP | B | `pyright` strict pass |
+| `engine/analysis_engine/python/interfaces.py` | Protocol interfaces & dataset contracts M7 (Kronos, Macro, Sentiment) | `aeterna-architect` | OMP | B | `pyright` strict pass |
 | `engine/analysis_engine/python/` | Wrapper PyO3, regime Kronos ONNX runtime, strategy pool | `aeterna-strategy` | OMP | B | `pytest tests/analysis/` |
 | `engine/execution/` | Bridge MT5 Exness, server-side SL/TP, order lifecycle | `aeterna-execution` | OMP | A | `GATE-M5-HUMAN` |
 | `engine/telegram_bot/` | Interface admin, notifikasi alert, inline control 2-step | `aeterna-execution` | OMP | A | `TEST-TEL-*` |
