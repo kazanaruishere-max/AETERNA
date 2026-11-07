@@ -30,7 +30,7 @@ def test_format_daily_dashboard_valid() -> None:
     assert "+$420.50" in msg
     assert "Engine PAUSED Events: 2" in msg
     assert "Average Session Spread: 1.8 pips" in msg
-    assert "myfxbook.com" in msg
+    assert data.myfxbook_url in msg
 
 
 def test_format_signal_alert_valid() -> None:
