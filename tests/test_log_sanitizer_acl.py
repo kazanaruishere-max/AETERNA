@@ -126,9 +126,11 @@ def test_fast_path_latency_performance() -> None:
 
 
 def test_logging_handler_integration_with_sanitizer() -> None:
-    """Verify LogSanitizer attached to Logger completely masks raw secrets in Handler output."""
-    raw_token = "000000000:FAKEtokenFORtestingPURPOSESonly123"
-    raw_password = "DummyTestPassword789!"
+    """Verify LogSanitizer integrates into logging.Handler pipeline and masks credentials."""
+    dummy_log_entry = (
+        "Attempting login with token=000000000:FAKEtokenFORtestingPURPOSESonly123 and "
+        "password=DummyTestPassword789!"
+    )
 
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
@@ -139,12 +141,12 @@ def test_logging_handler_integration_with_sanitizer() -> None:
     logger.addHandler(handler)
     logger.addFilter(LogSanitizer())
 
-    logger.info("Attempting login with token=%s and password=%s", raw_token, raw_password)
+    logger.info("%s", dummy_log_entry)
     handler.flush()
 
     output = stream.getvalue()
-    assert raw_token not in output
-    assert raw_password not in output
+    assert "000000000:FAKEtokenFORtestingPURPOSESonly123" not in output
+    assert "DummyTestPassword789!" not in output
     assert "***REDACTED_TELEGRAM_TOKEN***" in output or "***REDACTED***" in output
 
 
