@@ -1,0 +1,55 @@
+# Dependabot Configuration — AETERNA Quant Project
+# Mandate: Security-Only Lockdown & Minimal Disruption
+# - Version updates scheduled ONLY monthly to avoid numerical determinism drift.
+# - High-priority CVE security updates triggered on vulnerability advisories.
+# - Zero Auto-Merge: All PRs subject to branch protection on main & Human Operator review.
+
+version: 2
+updates:
+  # ----------------------------------------------------------------------------
+  # Python Toolchain (Root uv / pyproject.toml / uv.lock)
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "security"
+      - "python"
+    commit-message:
+      prefix: "chore(deps-python)"
+      include: "scope"
+
+  # ----------------------------------------------------------------------------
+  # Rust Engine (engine/analysis_engine/rust)
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "cargo"
+    directory: "/engine/analysis_engine/rust"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "security"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps-rust)"
+      include: "scope"
+
+  # ----------------------------------------------------------------------------
+  # Go Watchdog Daemon (engine/watchdog)
+  # ----------------------------------------------------------------------------
+  - package-ecosystem: "gomod"
+    directory: "/engine/watchdog"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "security"
+      - "go"
+    commit-message:
+      prefix: "chore(deps-go)"
+      include: "scope"

@@ -187,3 +187,35 @@ Saat sistem dipindahkan ke Windows Server VPS di masa mendatang:
 3. **Jadwal Maintenance OS Terkontrol**:
    - Windows Server Update otomatis dimatikan selama jam trading aktif (12:00 – 24:00 WIB).
    - Maintenance OS dan reboot terjadwal hanya dialokasikan pada hari Sabtu/Minggu saat pasar emas tutup.
+
+---
+
+## 6. Arsitektur Automated Security Scanning & Integritas Repositori
+
+Sistem menerapkan arsitektur Software Composition Analysis (SCA), Static Application Security Testing (SAST), dan lockfile integrity enforcement untuk menjamin determinisme serta keamanan supply-chain kode:
+
+### 6.1 Dependabot Security-Only Lockdown (`.github/dependabot.yml`)
+- **Ecosystems**: `pip` (root / uv), `cargo` (`engine/analysis_engine/rust`), dan `gomod` (`engine/watchdog`).
+- **Jadwal & Ruang Lingkup**: Terjadwal `monthly` (bulanan) untuk mencegah gangguan atau drift pada determinisme numerik dari version bumps harian/mingguan. Pembaruan keamanan berprioritas tinggi dipicu oleh advisory resmi (CVE).
+- **Penegakan Invariant (Zero Auto-Merge)**: Seluruh PR Dependabot dilabeli `dependencies` dan `security`, serta tunduk mutlak pada aturan branch protection `main` (wajib review manual Human Operator, auto-merge dilarang keras).
+
+### 6.2 CodeQL SAST Analysis (`.github/workflows/codeql.yml`)
+- **Cakupan Bahasa**: `python` dan `go`.
+- **Triggers**: Setiap push ke `main`, pull request menuju `main`, serta jadwal mingguan.
+- **Penyelarasan**: Bekerja berdampingan dengan static analyzer internal (`pyright strict`, `cargo clippy -D warnings`, `go vet`).
+
+### 6.3 Local Vulnerability Auditing CLI (`scripts/audit_security.py`)
+- Tooling audit lokal multi-stack:
+  - Python: `uv pip check` dan `pip-audit` (SCA CVE audit).
+  - Rust: `cargo audit` terhadap RustSec Advisory Database.
+  - Go: `govulncheck ./...` terhadap Go Vulnerability Database.
+- Dapat dieksekusi sewaktu-waktu oleh developer/operator via:
+  ```powershell
+  uv run python scripts/audit_security.py
+  ```
+
+### 6.4 Lockfile Hash Integrity Enforcement
+- CI runner Linux dan Windows diwajibkan menginstal dependensi dalam mode terkunci (*locked*):
+  - Python: `uv sync --frozen --all-groups`
+  - Rust: `cargo test --locked`, `cargo clippy --locked`, `maturin develop --locked`
+- Larangan mutlak bagi runner CI untuk memperbarui lockfile secara dinamis di lingkungan build.

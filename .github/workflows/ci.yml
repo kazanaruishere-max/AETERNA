@@ -52,12 +52,12 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Install Python Dependencies
-        run: uv sync --all-groups
+      - name: Install Python Dependencies (Locked)
+        run: uv sync --frozen --all-groups
 
-      - name: Build Rust PyO3 Extension
+      - name: Build Rust PyO3 Extension (Locked)
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
+        run: uv run maturin develop --locked --manifest-path engine/analysis_engine/rust/Cargo.toml
 
       - name: Run Pyright (Strict Mode)
         run: uv run pyright
@@ -66,9 +66,9 @@ jobs:
         if: hashFiles('scripts/verify_ecosystem.py') != ''
         run: uv run python scripts/verify_ecosystem.py --safety
 
-      - name: Run Cargo Clippy
+      - name: Run Cargo Clippy (Locked)
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: cargo clippy --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Set up Go
         if: hashFiles('engine/watchdog/go.mod') != ''
@@ -101,12 +101,12 @@ jobs:
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Python Dependencies
-        run: uv sync --all-groups
+      - name: Install Python Dependencies (Locked)
+        run: uv sync --frozen --all-groups
 
-      - name: Build Rust PyO3 Extension
+      - name: Build Rust PyO3 Extension (Locked)
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
+        run: uv run maturin develop --locked --manifest-path engine/analysis_engine/rust/Cargo.toml
 
       - name: Execute Deterministic Financial Golden Tests
         run: uv run pytest tests/ -v -m "golden or not integration"
@@ -125,9 +125,9 @@ jobs:
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Cargo Test
+      - name: Run Cargo Test (Locked)
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: cargo test --manifest-path engine/analysis_engine/rust/Cargo.toml --all --verbose
+        run: cargo test --locked --manifest-path engine/analysis_engine/rust/Cargo.toml --all --verbose
 
       - name: Set up Go
         if: hashFiles('engine/watchdog/go.mod') != ''
@@ -161,12 +161,12 @@ jobs:
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Dependencies
-        run: uv sync --all-groups
+      - name: Install Dependencies (Locked)
+        run: uv sync --frozen --all-groups
 
-      - name: Build Rust PyO3 Extension
+      - name: Build Rust PyO3 Extension (Locked)
         if: hashFiles('engine/analysis_engine/rust/Cargo.toml') != ''
-        run: uv run maturin develop --manifest-path engine/analysis_engine/rust/Cargo.toml
+        run: uv run maturin develop --locked --manifest-path engine/analysis_engine/rust/Cargo.toml
 
       - name: Run MT5 Execution Tests (Mock / Offline Terminal Tests)
         run: |
