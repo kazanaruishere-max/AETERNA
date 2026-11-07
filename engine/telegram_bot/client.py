@@ -431,9 +431,16 @@ class TelegramControlBot:
 
     def _render_status(self, user_id: int) -> str:
         lines = ["STATUS - CONTROL PANEL", f"Admin ID: {user_id}"]
-        metrics = self._collect_metrics()
-        if metrics is None:
+        collector = self._metrics_collector
+        if collector is None:
             lines.append("System snapshot: tidak tersedia (metrics collector belum aktif)")
+            return "\n".join(lines)
+
+        try:
+            metrics = collector.collect_daily_metrics()
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning("Metrics collection failed for status snapshot: %s", exc)
+            lines.append(f"System snapshot: gagal diambil ({exc})")
             return "\n".join(lines)
 
         try:
@@ -463,21 +470,9 @@ class TelegramControlBot:
                 return str(dashboard())
             metrics = collector.collect_daily_metrics()
             return format_daily_dashboard(self._to_dashboard_data(metrics))
-        except Exception:
-            # Report failure must not kill the polling loop.
-            logger.exception("Daily report generation failed")
-            return "Gagal menyusun dashboard harian (lihat log engine)."
-
-    def _collect_metrics(self) -> DailyMetrics | None:
-        collector = self._metrics_collector
-        if collector is None:
-            return None
-        try:
-            return collector.collect_daily_metrics()
-        except Exception:
-            # Degraded status beats a dead control panel.
-            logger.exception("Metrics collection failed for status snapshot")
-            return None
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning("Daily report generation failed: %s", exc)
+            return f"Gagal menyusun dashboard harian: {exc}"
 
     @staticmethod
     def _to_dashboard_data(metrics: DailyMetrics) -> DailyDashboardData:
