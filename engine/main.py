@@ -161,9 +161,7 @@ async def main_async() -> int:
     try:
         secrets = load_encrypted_secrets(DEFAULT_SECRETS_PATH)
         logger.info(
-            "Decrypted DPAPI secrets in memory (Account ID: %s, Server: %s)",
-            secrets.get("mt5_login"),
-            secrets.get("mt5_server"),
+            "Decrypted DPAPI trading secrets in memory successfully"
         )
     except (RuntimeError, ValueError, OSError) as exc:
         logger.error("Failed to decrypt DPAPI credentials: %s", exc)
