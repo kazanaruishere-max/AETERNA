@@ -57,12 +57,15 @@ def run_setup(output_path: Path | str = DEFAULT_SECRETS_PATH) -> int:
         print("[ERROR] Telegram Admin ID must be an integer.")
         return 1
 
+    telegram_channel_id = input("Enter Telegram Signal Channel ID (optional, e.g. @MyChannel or -100123456): ").strip()
+
     secrets_dict = {
         "mt5_login": mt5_login,
         "mt5_password": mt5_password,
         "mt5_server": mt5_server,
         "telegram_bot_token": telegram_bot_token,
         "telegram_admin_id": telegram_admin_id,
+        "telegram_channel_id": telegram_channel_id,
     }
 
     try:

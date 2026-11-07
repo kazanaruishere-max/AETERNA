@@ -102,6 +102,19 @@ class ExnessClient:
                     return False
 
             self._connected = True
+
+            # Auto-detect broker symbol suffix (e.g. XAUUSDm on Exness Standard)
+            if hasattr(self._mt5, "symbol_info"):
+                if self._mt5.symbol_info(self.symbol) is None:
+                    fallback_symbol = f"{self.symbol}m" if not self.symbol.endswith("m") else self.symbol[:-1]
+                    if self._mt5.symbol_info(fallback_symbol) is not None:
+                        logger.info(
+                            "Symbol '%s' not present in broker specifications; auto-detected '%s'",
+                            self.symbol,
+                            fallback_symbol,
+                        )
+                        self.symbol = fallback_symbol
+
             logger.info("Successfully connected to Exness MT5 (Symbol: %s)", self.symbol)
             return True
 
