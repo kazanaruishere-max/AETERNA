@@ -107,9 +107,7 @@ async def main_async() -> int:
         return 1
 
     admin_id = int(raw_admin_id)
-    print(f"[+] Loaded Token   : {token[:6]}...{token[-4:]}")
-    print(f"[+] Admin ID       : {admin_id}")
-    print(f"[+] Signal Channel : {channel_id or '(Not configured / Optional)'}")
+    print("[+] Loaded credentials successfully from secure storage")
 
     # Initialize Telegram Control Bot stack
     store = InMemoryEphemeralStore()
@@ -149,7 +147,7 @@ async def main_async() -> int:
 
     # Optional test for Channel
     if channel_id:
-        print(f"\n[*] Testing Broadcast to Channel: {channel_id}...")
+        print("\n[*] Testing Broadcast to Channel...")
         test_msg = (
             "⚡ [TEST SIGNAL BROADCAST — AETERNA QUANT]\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -163,9 +161,9 @@ async def main_async() -> int:
             "text": test_msg,
         })
         if chan_success:
-            print(f"[SUCCESS] Test signal broadcasted to channel {channel_id}!")
+            print("[SUCCESS] Test signal broadcasted to signal channel!")
         else:
-            print(f"[!] Warning: Could not post to channel {channel_id}.")
+            print("[!] Warning: Could not post to signal channel.")
             print("    Pastikan Bot sudah di-add sebagai ADMINISTRATOR di channel tersebut.")
 
     print("\n" + "=" * 80)
