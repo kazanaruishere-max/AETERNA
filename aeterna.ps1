@@ -1,7 +1,7 @@
 param (
     [switch]$engine,
     [switch]$check,
-    [string]$symbol = "XAUUSD"
+    [string]$symbol = "XAUUSDm"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,15 +18,19 @@ if ($check) {
 }
 
 if ($engine) {
+    # Step A: Pre-flight credentials verification (.secrets.enc or .env)
     $SecretsFile = Join-Path $ProjectRoot "data\.secrets.enc"
-    if (-not (Test-Path $SecretsFile)) {
-        Write-Host "ERROR: Encrypted credentials not found at: $SecretsFile" -ForegroundColor Red
-        Write-Host "Please bootstrap your credentials first by running:" -ForegroundColor Yellow
-        Write-Host "    uv run python scripts/setup_secrets.py" -ForegroundColor White
+    $EnvFile = Join-Path $ProjectRoot ".env"
+
+    if (-not (Test-Path $SecretsFile) -and -not (Test-Path $EnvFile)) {
+        Write-Host "ERROR: Credentials not found (neither data\.secrets.enc nor .env exists)." -ForegroundColor Red
+        Write-Host "Please set up your credentials by either:" -ForegroundColor Yellow
+        Write-Host "  1. Copying .env.example to .env and filling in your credentials, OR" -ForegroundColor White
+        Write-Host "  2. Running: uv run python scripts/setup_secrets.py" -ForegroundColor White
         exit 1
     }
 
-    Write-Host "Pre-flight Check: DPAPI encrypted credentials verified." -ForegroundColor Green
+    Write-Host "Pre-flight Check: Trading credentials verified." -ForegroundColor Green
 
     $WatchdogDir = Join-Path $ProjectRoot "engine\watchdog"
     $WatchdogExe = Join-Path $WatchdogDir "watchdog.exe"

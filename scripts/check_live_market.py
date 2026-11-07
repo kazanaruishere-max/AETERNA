@@ -25,7 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from engine.ingestion.python.exness_client import ExnessClient
 
 
-def run_diagnostic(symbol: str = "XAUUSD") -> int:
+def run_diagnostic(symbol: str = "XAUUSDm") -> int:
     """Execute live market inspection."""
     print("=" * 80)
     print(f"AETERNA QUANT — LIVE MARKET & PLUMBING DIAGNOSTIC ({symbol})")
@@ -118,8 +118,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AETERNA Live Market Diagnostic")
     parser.add_argument(
         "--symbol",
-        default="XAUUSD",
-        help="Trading symbol to inspect (default: XAUUSD, use XAUUSDm for Exness standard)",
+        default="XAUUSDm",
+        help="Trading symbol to inspect (default: XAUUSDm for Exness standard)",
     )
     args = parser.parse_args()
     sys.exit(run_diagnostic(symbol=args.symbol))

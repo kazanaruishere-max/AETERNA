@@ -255,6 +255,89 @@ def save_encrypted_secrets(
     logger.info("Encrypted secrets saved to %s", path)
 
 
+def load_credentials_from_env() -> dict[str, Any] | None:
+    """Read credentials from .env file or environment variables if present."""
+    import os
+
+    env_path = Path(".env")
+    env_vars: dict[str, str] = {}
+
+    if env_path.is_file():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    val = val.strip().strip("'\"")
+                    env_vars[key.strip()] = val
+        except OSError as exc:
+            logger.warning("Could not read .env file: %s", exc)
+
+    # Read from parsed file or process environment
+    def get_val(key: str) -> str | None:
+        return env_vars.get(key) or os.environ.get(key)
+
+    token = get_val("TELEGRAM_BOT_TOKEN")
+    admin_id_str = get_val("TELEGRAM_ADMIN_USER_ID") or get_val("TELEGRAM_ADMIN_ID")
+
+    # If minimal credentials are not set in .env, return None
+    if not token and not admin_id_str:
+        return None
+
+    res: dict[str, Any] = {}
+    if token:
+        res["telegram_bot_token"] = SecretString.from_plaintext(token)
+    if admin_id_str:
+        if admin_id_str.isdigit() or (admin_id_str.startswith("-") and admin_id_str[1:].isdigit()):
+            res["telegram_admin_id"] = int(admin_id_str)
+        else:
+            logger.warning("Invalid non-integer TELEGRAM_ADMIN_ID in environment: %s", admin_id_str)
+
+    channel_id = get_val("TELEGRAM_CHANNEL_ID") or get_val("TELEGRAM_SIGNAL_CHANNEL_ID")
+    if channel_id:
+        res["telegram_channel_id"] = channel_id
+
+    mt5_login_str = get_val("EXNESS_MT5_LOGIN") or get_val("MT5_LOGIN")
+    if mt5_login_str:
+        if mt5_login_str.isdigit():
+            res["mt5_login"] = int(mt5_login_str)
+        else:
+            logger.warning("Invalid non-integer EXNESS_MT5_LOGIN in environment: %s", mt5_login_str)
+
+    mt5_pass = get_val("EXNESS_MT5_PASSWORD") or get_val("MT5_PASSWORD")
+    if mt5_pass:
+        res["mt5_password"] = SecretString.from_plaintext(mt5_pass)
+
+    mt5_srv = get_val("EXNESS_MT5_SERVER") or get_val("MT5_SERVER")
+    if mt5_srv:
+        res["mt5_server"] = mt5_srv
+
+    return res
+
+
+def load_trading_secrets(
+    filepath: Path | str = DEFAULT_SECRETS_PATH,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
+) -> dict[str, Any]:
+    """Unified credential loader: checks DPAPI (.secrets.enc) first, falls back to .env."""
+    path = Path(filepath)
+    if path.is_file():
+        try:
+            return load_encrypted_secrets(path, entropy=entropy)
+        except (DPAPIError, OSError, ValueError) as exc:
+            logger.warning("Failed to decrypt DPAPI secrets (%s), trying .env fallback...", exc)
+
+    env_creds = load_credentials_from_env()
+    if env_creds:
+        return env_creds
+
+    raise FileNotFoundError(
+        "No credentials found. Either create .env (see .env.example) or run: uv run python scripts/setup_secrets.py"
+    )
+
+
 def load_encrypted_secrets(
     filepath: Path | str = DEFAULT_SECRETS_PATH,
     entropy: bytes = DEFAULT_APP_ENTROPY,

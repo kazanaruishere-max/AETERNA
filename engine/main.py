@@ -24,7 +24,7 @@ from typing import Any
 
 from engine.ingestion.python.exness_client import ExnessClient
 from engine.monitoring.types import DailyMetrics
-from engine.security.dpapi import DEFAULT_SECRETS_PATH, load_encrypted_secrets
+from engine.security.dpapi import DEFAULT_SECRETS_PATH, load_trading_secrets
 from engine.security.log_sanitizer import LogSanitizer
 from engine.telegram_bot.auth import (
     InMemoryEphemeralStore,
@@ -150,21 +150,18 @@ async def main_async() -> int:
     print("AETERNA QUANT ENGINE — INITIALIZING LIVE RUNTIME")
     print("=" * 80)
 
-    # 1. Verify encrypted DPAPI credentials
-    if not Path(DEFAULT_SECRETS_PATH).is_file():
+    # 1. Verify and load credentials (.secrets.enc DPAPI or .env fallback)
+    try:
+        secrets = load_trading_secrets(DEFAULT_SECRETS_PATH)
+        logger.info("Loaded trading credentials into secure memory successfully")
+    except FileNotFoundError as exc:
         logger.error(
-            "Encrypted credentials not found at %s. Please run: uv run python scripts/setup_secrets.py",
-            DEFAULT_SECRETS_PATH,
+            "Credentials missing: %s. You can create a .env file (see .env.example) or run: uv run python scripts/setup_secrets.py",
+            exc,
         )
         return 1
-
-    try:
-        secrets = load_encrypted_secrets(DEFAULT_SECRETS_PATH)
-        logger.info(
-            "Decrypted DPAPI trading secrets in memory successfully"
-        )
     except (RuntimeError, ValueError, OSError) as exc:
-        logger.error("Failed to decrypt DPAPI credentials: %s", exc)
+        logger.error("Failed to load credentials: %s", exc)
         return 1
 
     # 2. Initialize MT5 Client
@@ -176,7 +173,7 @@ async def main_async() -> int:
         login=mt5_login if mt5_login else None,
         password=mt5_pass if mt5_pass else None,
         server=mt5_server if mt5_server else None,
-        symbol="XAUUSD",
+        symbol="XAUUSDm",
     )
 
     logger.info("Attempting connection to MetaTrader 5 terminal...")

@@ -201,7 +201,7 @@ def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
     """Verify scripts/setup_secrets.py runs cleanly and writes encrypted payload."""
     test_out = tmp_path / ".secrets.enc"
 
-    inputs = iter(["11223344", "Exness-MT5Trial", "55667788"])
+    inputs = iter(["11223344", "Exness-MT5Trial", "55667788", "@AeternaSignalsTest"])
     passwords = iter(["SuperSecureMT5Pass", "TelegramBotTokenSecret"])
 
     def mock_input(_prompt: str = "") -> str:
