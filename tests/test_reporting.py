@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from engine.models import StateMachineState, SystemStateRecord, TradeRecord
+from engine.models import (
+    BlockedSignalRecord,
+    StateMachineState,
+    SystemStateRecord,
+    TradeRecord,
+)
 from engine.monitoring.reporter import DailyMetricsReporter
 from engine.shared.db import DatabaseManager
 from engine.telegram_bot.interfaces import DailyMetricsCollector
@@ -63,6 +68,20 @@ def _create_trade(
         exit_reason="tp_hit" if pnl_usd > 0 else "sl_hit",
         pnl_usd=pnl_usd,
         pnl_pips=pnl_pips,
+    )
+
+
+def _create_blocked_signal(timestamp_utc: str) -> BlockedSignalRecord:
+    """Helper to construct a state-machine protection block record."""
+    return BlockedSignalRecord(
+        timestamp_utc=timestamp_utc,
+        pair="XAUUSD",
+        direction="LONG",
+        strategy_selected="M15_MOMENTUM",
+        reason_blocked="state_machine_paused",
+        confidence_at_time=82.0,
+        would_be_entry_price=2741.0,
+        current_spread=4.2,
     )
 
 
@@ -229,7 +248,7 @@ def test_dashboard_template_integration(db: DatabaseManager) -> None:
             pnl_usd=50.0,
             pnl_pips=25.0,
             exit_time="2026-11-06T09:00:00Z",
-            state="PAUSED",
+            state="NORMAL",
             entry_time="2026-11-06T08:30:00Z",
             spread=2.0,
         ),
@@ -245,6 +264,7 @@ def test_dashboard_template_integration(db: DatabaseManager) -> None:
     ]
     for trade in trades:
         db.insert_trade(trade)
+    db.insert_blocked_signal(_create_blocked_signal("2026-11-06T07:30:00Z"))
 
     db.set_system_state(
         SystemStateRecord(
@@ -279,3 +299,21 @@ def test_dashboard_template_integration(db: DatabaseManager) -> None:
     assert "Average Session Spread: 1.7 pips" in report
     assert url in report
     assert "Deterministic SQLite Audit Ledger" in report
+
+
+def test_fractional_second_exit_timestamp(db: DatabaseManager) -> None:
+    """Verify trades exiting in the final second with sub-second timestamps are not dropped."""
+    late_trade = _create_trade(
+        "TRD-LATE",
+        pnl_usd=15.0,
+        pnl_pips=7.5,
+        exit_time="2026-11-06T23:59:59.852Z",
+    )
+    db.insert_trade(late_trade)
+
+    reporter = DailyMetricsReporter(db_manager=db)
+    metrics = reporter.collect_daily_metrics(target_date=TARGET_DATE)
+
+    assert metrics.total_trades == 1
+    assert metrics.win_trades == 1
+    assert metrics.net_pnl_usd == 15.0
