@@ -29,6 +29,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `instruments/xauusd/strategies/` | Logika 4 strategi spesifik XAUUSD (ATR Breakout, dll) | `aeterna-strategy` | OMP | B | Strategy unit tests |
 | `instruments/xauusd/macro_features/` | Kalkulasi variabel makro XAUUSD (US TIPS 10Y, DXY) | `aeterna-strategy` | OMP | B | Macro feature tests |
 | `tests/` | Golden tests deterministik & suite pengujian otomatis | `aeterna-verifier` | OMP | A | `uv run pytest tests/ -v` |
+| `scripts/` | Skrip verifikasi ekosistem 5-pilar dan audit keamanan lokal (SCA) | `aeterna-security` | Lead / Verifier | A | `uv run python scripts/audit_security.py` |
 | `docs/` | Dokumentasi arsitektur, PRD, security, dan operasional | `aeterna-architect` | Lead / Manual | C | Doc review |
 
 ---
