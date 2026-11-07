@@ -67,7 +67,7 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 | `REQ-EXE-003` | sec §1 | Manajemen kredensial zero-plaintext via `.env` dan Windows DPAPI | M5 | COVERED | TASK-M5-03 | `test_dpapi_security.py` | VERIFIED |
 | `REQ-EXE-004` | sec §3 | Log sanitization filter (redaksi otomatis password, token, akun MT5) | M5 | COVERED | TASK-M5-04 | `test_log_sanitizer_acl.py` | VERIFIED |
 | `REQ-EXE-005` | sec §3.3 | Proteksi izin akses Windows ACL (`icacls`) Current User Only pada log dan DB | M5 | COVERED | TASK-M5-04 | `test_log_sanitizer_acl.py` | VERIFIED |
-| `REQ-TEL-001` | sec §2.1 | Telegram Bot dengan whitelist integer `TELEGRAM_ADMIN_ID` (silent drop) | M6 | PENDING | TASK-M6-01 | `TEST-TEL-001` | BACKLOG |
-| `REQ-TEL-002` | sec §2.2 | Ephemeral callback nonce 60 detik untuk pencegahan replay attack | M6 | PENDING | TASK-M6-01 | `TEST-TEL-002` | BACKLOG |
-| `REQ-TEL-003` | sec §2.3 | Two-step confirmation (batas 15s) untuk Killswitch dan Force Close All | M6 | PENDING | TASK-M6-02 | `TEST-TEL-003` | BACKLOG |
-| `REQ-TEL-004` | arch §6.3 | Laporan harian otomatis: PnL, Win/Loss, Max DD, waktu PAUSED, link Myfxbook | M6 | PENDING | TASK-M6-03 | `TEST-TEL-004` | BACKLOG |
+| `REQ-TEL-001` | sec §2.1 | Telegram Bot dengan whitelist integer `TELEGRAM_ADMIN_ID` (silent drop) | M6 | COVERED | TASK-M6-STREAM-A, TASK-M6-STREAM-C | `test_telegram_auth.py`, `test_telegram_client.py` | VERIFIED |
+| `REQ-TEL-002` | sec §2.2 | Ephemeral callback nonce 60 detik untuk pencegahan replay attack | M6 | COVERED | TASK-M6-STREAM-A, TASK-M6-STREAM-C | `test_telegram_auth.py`, `test_telegram_client.py` | VERIFIED |
+| `REQ-TEL-003` | sec §2.3 | Two-step confirmation (batas 15s) untuk Killswitch dan Force Close All | M6 | COVERED | TASK-M6-STREAM-A, TASK-M6-STREAM-C | `test_telegram_auth.py`, `test_telegram_client.py` | VERIFIED |
+| `REQ-TEL-004` | arch §6.3 | Laporan harian otomatis: PnL, Win/Loss, Max DD, waktu PAUSED, link Myfxbook | M6 | COVERED | TASK-M6-STREAM-B, TASK-M6-STREAM-C | `test_reporting.py`, `test_telegram_client.py` | VERIFIED |
