@@ -45,13 +45,10 @@ def _make_mock_series(base_val: float, count: int = 25) -> pd.Series:
 def test_macro_provider_protocol_conformance(tmp_path: Path) -> None:
     """Verify that FredMacroFeatureProvider satisfies MacroFeatureProvider protocol."""
     db_file = str(tmp_path / "macro_protocol.db")
-    provider = FredMacroFeatureProvider(db_path=db_file)
-    try:
+    with FredMacroFeatureProvider(db_path=db_file) as provider:
         assert isinstance(provider, MacroFeatureProvider)
         assert callable(getattr(provider, "get_latest_macro_features", None))
         assert callable(getattr(provider, "get_historical_macro_features", None))
-    finally:
-        provider.close()
 
 
 def test_24h_caching_suppresses_redundant_api_calls(tmp_path: Path) -> None:
