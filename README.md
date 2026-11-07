@@ -33,6 +33,89 @@ The engine strictly enforces a **Zero-LLM Live Execution Boundary**: Large Langu
 
 The system operates continuously across eight deterministic pipeline stages, ensuring comprehensive verification before any capital is committed to the market:
 
+### System Architecture & Operational Flowchart
+
+```mermaid
+flowchart TD
+    subgraph S1["Stage 1: Multi-Source Market Ingestion"]
+        MT5["MetaTrader 5 Exness<br/>(M1, M15, H1, H4 OHLCV & Tick Volume)"]
+        OANDA["OANDA v20 REST API<br/>(Retail Position & Order Book Skew)"]
+        FRED["FRED API Macro Feed<br/>(US TIPS 10Y Yield & DXY Proxy)"]
+        SQLITE[("Canonical SQLite WAL Tables<br/>market_candles & macro_features_cache")]
+        MT5 --> SQLITE
+        OANDA --> SQLITE
+        FRED --> SQLITE
+    end
+
+    subgraph S2["Stage 2: Spread & News State Machine"]
+        EWMA["EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
+        NEWS_CAL["FRED Macro Calendar Blackout<br/>T - 10 Minutes Window"]
+        STATE_CHECK{"System State == NORMAL?"}
+        EWMA --> STATE_CHECK
+        NEWS_CAL --> STATE_CHECK
+    end
+    SQLITE --> S2
+
+    BLOCK1["Block Entry Order<br/>Log to blocked_signals"]
+    STATE_CHECK -- "NO (PAUSED / PRE_NEWS / RECOVERY)" --> BLOCK1
+
+    subgraph S3["Stage 3: Deep Market Regime Classification"]
+        CTX["512 Closed H4 Bars<br/>(~3.5–4 Months Context)"]
+        SCALE["Zero-Leakage RollingFeatureScaler<br/>Temporal Gate: max(X) < y"]
+        KRONOS["Kronos ONNX Runtime CPU<br/>(Inference Latency <5ms)"]
+        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Confidence ≥0.60)"]
+        CTX --> SCALE --> KRONOS --> REGIME
+    end
+    STATE_CHECK -- "YES" --> S3
+
+    subgraph S4["Stage 4: Multi-Timeframe Strategy Pool"]
+        ST1["Strategy 1: Volatility Breakout (M15)<br/>Donchian 20 + ATR Expansion (>1.2x)"]
+        ST2["Strategy 2: Positioning Contrarian (H1/M15)<br/>OANDA Retail Crowding >75%"]
+        ST3["Strategy 3: Macro Intermarket<br/>TIPS 10Y 20d Delta & DXY Trend"]
+        ST4["Strategy 4: Adaptive Mean-Reversion (M15)<br/>Ranging Regime Only + RSI(14) + Volatility Band"]
+        RR_GATE{"Reward-to-Risk ≥ 2.0?"}
+        ST1 & ST2 & ST3 & ST4 --> RR_GATE
+    end
+    REGIME --> S4
+
+    RR_GATE -- "NO" --> BLOCK1
+
+    subgraph S5["Stage 5: Master Risk Gate & Sizing (Go Watchdog)"]
+        WATCHDOG["Independent Go Watchdog Daemon<br/>(127.0.0.1:20129 / Pure Read-Only WAL)"]
+        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > $0<br/>• Daily Loss < 2.0%<br/>• Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
+        SIZING["Graduated Liquidity Sizing:<br/>• Normal Volume: 100% (0.5% Risk)<br/>• Thin Liquidity (Z_vol < -2.0): 50%<br/>• Rollover / Holiday: 0% Block"]
+        WATCHDOG --> RISK_CHECK --> SIZING
+    end
+    RR_GATE -- "YES (Candidate TradeSignal)" --> S5
+
+    RISK_CHECK -- "FAIL" --> BLOCK1
+
+    subgraph S6["Stage 6: Broker Bridge Execution"]
+        LOCK["threading.RLock() Mutual Exclusion"]
+        BRIDGE["ExnessBrokerBridge (MetaTrader 5)"]
+        SERVER_ORDER["Mandatory Server-Side SL & TP Attached<br/>SL = 1.5 * ATR(14) | Dynamic IOC/FOK"]
+        LOCK --> BRIDGE --> SERVER_ORDER
+    end
+    SIZING --> S6
+
+    subgraph S7["Stage 7: Active 5-Layer Exit Management"]
+        L1["Layer 1: Fixed Server-Side SL & TP"]
+        L2["Layer 2: Trailing Stop to Break-Even at +1.0R"]
+        L3["Layer 3: Partial Scale-Out 50% Volume at +1.0R"]
+        L4["Layer 4: Time Invalidation (8 M15 Bars / 2 Hours)"]
+        L5["Layer 5: Regime Invalidation (H4 Direction Reversal)"]
+        L_ROLL["Daily Rollover Force Close: 15m Before Break"]
+        SERVER_ORDER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
+    end
+
+    subgraph S8["Stage 8: Alerting & Telegram Operations"]
+        BOT_CTRL["Telegram Control Bot (Admin Chat)<br/>• Whitelist ID & 60s Ephemeral Nonce<br/>• 15s Two-Step Confirmation<br/>• Commands: /status, /report, /pause, /killswitch"]
+        CHAN_ALERT["Telegram Signal Broadcast Channel<br/>• Formatted Signal Alert (Strict Jargon Purity)<br/>• Candlestick Chart PNG with SL/TP Overlay"]
+        DAILY_REP["Daily Session Metrics Reporter<br/>• Net P&L, Win Ratio, Max Intraday Drawdown"]
+    end
+    S7 --> S8
+```
+
 ```
 [ Market Data Feeds ] (Exness MT5 M1-H4 + OANDA v20 + FRED API Macro)
          │
