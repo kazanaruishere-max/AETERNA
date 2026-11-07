@@ -293,14 +293,17 @@ def test_ephemeral_store_crud_and_delete() -> None:
     store = InMemoryEphemeralStore()
 
     assert store.get("non_existent") is None
-    assert store.delete("non_existent") is False
+    deleted_missing = store.delete("non_existent")
+    assert deleted_missing is False
 
     store.set("test_key", {"data": 42}, ttl_seconds=30.0)
     assert store.get("test_key") == {"data": 42}
 
-    assert store.delete("test_key") is True
+    deleted_existing = store.delete("test_key")
+    assert deleted_existing is True
     assert store.get("test_key") is None
-    assert store.delete("test_key") is False
+    deleted_again = store.delete("test_key")
+    assert deleted_again is False
 
 
 def test_ephemeral_store_concurrency() -> None:
