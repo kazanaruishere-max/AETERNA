@@ -33,13 +33,13 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 
 | REQ ID | Sumber | Deskripsi Persyaratan | Target | Disposisi | Task ID | Test / Gate | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| `REQ-STR-001` | arch §4.1 | Implementasi Strategi 1: Volatility Breakout ATR expansion M15 | M3 | PENDING | TASK-M3-01 | `TEST-STR-001` | BACKLOG |
-| `REQ-STR-002` | arch §4.3 | Hierarki Multi-Timeframe: H4 Regime, H1 Setup, M15 Execution | M3 | PENDING | TASK-M3-02 | `TEST-STR-002` | BACKLOG |
-| `REQ-STR-003` | arch §9 | Starting parameters YAML loader dinamis (`instruments/xauusd/config/parameters.yaml`) | M3 | PENDING | TASK-M3-03 | `TEST-STR-003` | BACKLOG |
-| `REQ-STR-004` | arch §4.1 | Strategi 2: Positioning Contrarian (OANDA Book Sentiment) | M7 | DEFERRED | - | - | BACKLOG |
-| `REQ-STR-005` | arch §4.1 | Strategi 3: Intermarket Correlation (US Real Yield TIPS 10Y + DXY) | M7 | DEFERRED | - | - | BACKLOG |
-| `REQ-STR-006` | arch §4.1 | Strategi 4: Mean-Reversion Adaptive Volatility Band | M7 | DEFERRED | - | - | BACKLOG |
-| `REQ-STR-007` | arch §4.2 | Integrasi model Kronos ONNX Runtime CPU untuk deteksi regime H4 | M7 | DEFERRED | - | - | BACKLOG |
+| `REQ-STR-001` | arch §4.1 | Implementasi Strategi 1: Volatility Breakout ATR expansion M15 | M3 | COVERED | TASK-M3-01 | `test_volatility_breakout.py` | VERIFIED |
+| `REQ-STR-002` | arch §4.3 | Hierarki Multi-Timeframe: H4 Regime, H1 Setup, M15 Execution | M3 | COVERED | TASK-M3-02 | `test_volatility_breakout.py` | VERIFIED |
+| `REQ-STR-003` | arch §9 | Starting parameters YAML loader dinamis (`instruments/xauusd/config/parameters.yaml`) | M3 | COVERED | TASK-M3-03 | `test_config_loader.py` | VERIFIED |
+| `REQ-STR-004` | arch §4.1 | Strategi 2: Positioning Contrarian (OANDA Book Sentiment) | M7 | COVERED | TASK-M7-STREAM-C | `test_contrarian_and_meanrev.py` | VERIFIED |
+| `REQ-STR-005` | arch §4.1 | Strategi 3: Intermarket Correlation (US Real Yield TIPS 10Y + DXY) | M7 | COVERED | TASK-M7-STREAM-B | `test_macro_provider.py` | VERIFIED |
+| `REQ-STR-006` | arch §4.1 | Strategi 4: Mean-Reversion Adaptive Volatility Band | M7 | COVERED | TASK-M7-STREAM-C | `test_contrarian_and_meanrev.py` | VERIFIED |
+| `REQ-STR-007` | arch §4.2 | Integrasi model Kronos ONNX Runtime CPU untuk deteksi regime H4 | M7 | COVERED | TASK-M7-STREAM-A | `test_kronos_engine.py` | VERIFIED |
 
 ---
 
