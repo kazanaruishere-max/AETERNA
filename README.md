@@ -1,5 +1,9 @@
 # AETERNA Quant Engine
 
+<div align="center">
+
+[ English ](README.md) • [ Bahasa Indonesia ](README.id.md)
+
 [![CI Pipeline](https://github.com/kazanaruishere-max/AETERNA/actions/workflows/ci.yml/badge.svg)](https://github.com/kazanaruishere-max/AETERNA/actions/workflows/ci.yml)
 [![CodeQL SAST Analysis](https://github.com/kazanaruishere-max/AETERNA/actions/workflows/codeql.yml/badge.svg)](https://github.com/kazanaruishere-max/AETERNA/actions/workflows/codeql.yml)
 [![Deterministic Golden Tests](https://img.shields.io/badge/Financial%20Tests-100%25%20Passing-brightgreen.svg)](https://github.com/kazanaruishere-max/AETERNA/actions)
@@ -9,21 +13,135 @@
 [![Rust 2021](https://img.shields.io/badge/Rust-PyO3%20FFI-orange.svg)](https://www.rust-lang.org/)
 [![Go 1.22+](https://img.shields.io/badge/Go-Watchdog%20Daemon-cyan.svg)](https://go.dev/)
 
+</div>
+
 ---
 
 ## 1. Executive Summary
 
-**AETERNA Quant Engine** is an institutional-grade, multi-stack algorithmic trading system purpose-built for spot gold (**XAUUSD**). It synthesizes high-performance mathematical modeling, robust systems engineering, and fail-safe capital defense into an autonomous operational pipeline.
+**AETERNA Quant Engine** is an institutional-grade, multi-stack quantitative trading system purpose-built for spot gold (**XAUUSD**). It unifies quantitative feature engineering, deep time-series regime classification, dynamic position sizing, and broker execution into an autonomous and resilient operational pipeline.
 
-The engine operates on a strict **zero-LLM live execution boundary**: large language models and autonomous agents are utilized exclusively offline as engineering and development assistants. All real-time market data evaluation, statistical regime classification, dynamic position sizing, and broker trade executions are 100% deterministic, executed via a polyglot architecture:
+The engine strictly enforces a **Zero-LLM Live Execution Boundary**: Large Language Models and autonomous sub-agents are utilized exclusively offline as engineering and development tooling. All runtime market data evaluation, statistical regime classification, dynamic position sizing, and broker trade executions are 100% deterministic, executed across a polyglot architecture:
 
-- **Python (3.12+)**: High-level strategy coordination, multi-timeframe feature pipelines, ONNX Runtime CPU inference, and asynchronous Telegram administration.
-- **Rust (PyO3 C-Extension)**: Ultra-low latency backtesting engine, Exness-specific adaptive slippage simulation, and 1,000-iteration Monte Carlo permutation validation.
-- **Go (Watchdog Daemon)**: Independent, out-of-process system supervisor running locally on `127.0.0.1:20129`, acting as an unbypassable master risk gate, deadman switch, and emergency circuit breaker.
+- **Python (3.12+)**: High-level strategy orchestration, multi-timeframe feature pipelines, Kronos ONNX Runtime CPU inference, and asynchronous Telegram administration.
+- **Rust (PyO3 C-Extension)**: Ultra-low latency backtesting engine, Exness-specific adaptive slippage modeling, and 1,000-iteration Monte Carlo permutation verification.
+- **Go (Watchdog Daemon)**: Independent out-of-process supervisor running locally on `127.0.0.1:20129`, acting as an unbypassable master risk gate, deadman switch, and emergency circuit breaker.
 
 ---
 
-## 2. The 5 Absolute Invariants (Non-Negotiable Commandments)
+## 2. End-to-End Operational Workflow
+
+The system operates continuously across eight deterministic pipeline stages, ensuring comprehensive verification before any capital is committed to the market:
+
+```
+[ Market Data Feeds ] (Exness MT5 M1-H4 + OANDA v20 + FRED API Macro)
+         │
+         ▼
+[ Stage 1: Ingestion & Storage Engine ] ──► SQLite WAL Canonical Tables
+         │
+         ▼
+[ Stage 2: State Machine & News Filter ]
+  ├─ EWMA Spread Baseline (α=0.08) & Z-Score Gate
+  └─ FRED High-Impact Blackout Window (T - 10 min)
+         │ (State == NORMAL only)
+         ▼
+[ Stage 3: H4 Regime Classification ] (Kronos ONNX Runtime CPU)
+  ├─ Context: Exactly 512 closed H4 bars (~3.5–4 months)
+  ├─ Normalization: Zero-Leakage RollingFeatureScaler (window=512)
+  └─ Temporal Assertion Gate: max(X.timestamp) < y.timestamp
+         │
+         ▼
+[ Stage 4: Multi-Timeframe Strategy Pool ]
+  ├─ Strategy 1: Volatility Breakout (M15 Donchian + ATR expansion)
+  ├─ Strategy 2: Positioning Contrarian (OANDA Book >75% Crowding)
+  ├─ Strategy 3: Macro Intermarket (US TIPS 10Y Yield + DXY Proxy)
+  └─ Strategy 4: Mean-Reversion in Confirmed Ranging Regime
+         │ (Candidate Signal with R:R ≥ 2.0)
+         ▼
+[ Stage 5: Master Risk Gate & Watchdog (Go Daemon 127.0.0.1:20129) ]
+  ├─ Capital Invariants: Risk 0.5% | Daily Loss < 2% | Drawdown < 10%
+  ├─ Concurrency: Max 1 open position | Max 5 trades/day
+  └─ Graduated Sizing: Normal 100% | Thin Liquidity (Z_vol < -2.0) 50%
+         │ (Approved)
+         ▼
+[ Stage 6: Broker Bridge Execution (Exness MT5) ]
+  ├─ Thread-Safe MT5 Lock (threading.RLock)
+  ├─ Mandatory Server-Side Attached SL/TP (Zero naked orders)
+  └─ Execution Mode: Dynamic IOC / FOK
+         │
+         ▼
+[ Stage 7: Active 5-Layer Exit Management ]
+  ├─ Layer 1: Fixed Server-Side SL & TP
+  ├─ Layer 2: Dynamic Trailing Stop (+1.0R profit)
+  ├─ Layer 3: Partial Scale-Out (50% volume at +1.0R)
+  ├─ Layer 4: Time Invalidation (8 M15 bars / 2 hours)
+  ├─ Layer 5: Regime Invalidation (H4 reversal emergency exit)
+  └─ Hard Rollover Liquidation: 15 min before bank break (20:44 / 21:44 UTC)
+         │
+         ▼
+[ Stage 8: Reporting & Dual-Stream Telegram Distribution ]
+  ├─ Stream 1: Control Panel Bot (Private Chat with Admin, 2-Step Confirm)
+  ├─ Stream 2: Signal Broadcast Channel (Signal Alert + Candlestick Chart)
+  └─ Stream 3: Daily Session Metrics & Dashboard Summary
+```
+
+### Detailed Workflow Stages
+
+1. **Stage 1 — Multi-Source Ingestion**:
+   - Ingests M1, M15, H1, and H4 OHLCV bars plus tick volume directly from the MetaTrader 5 terminal via native C-bindings.
+   - Polls OANDA v20 REST API every 15–30 minutes for retail positioning and order book distributions.
+   - Fetches macroeconomic series from FRED API (US TIPS 10Y Real Yield: `DFII10`, DXY Dollar Index: `DTWEXBGS`) backed by an isolated 24-hour SQLite cache and zero-crash graceful fallback.
+   - Commits records into canonical SQLite Write-Ahead Logging (WAL) tables (`market_candles`, `macro_features_cache`).
+
+2. **Stage 2 — Spread & News State Machine**:
+   - Tracks dynamic spread expansion via Exponentially Weighted Moving Average (EWMA):
+     $$S_{baseline}(t) = \alpha \cdot S(t) + (1 - \alpha) \cdot S_{baseline}(t - 1), \quad \alpha = 0.08$$
+   - Calculates real-time spread Z-score: $Z(t) = (S(t) - S_{baseline}(t)) / \sigma_S(t)$.
+   - Manages four distinct states: `NORMAL`, `PRE_NEWS_WATCH` (starts $T-10$ min before high-impact release), `PAUSED` ($Z \ge 3.0$ or scheduled release active), and `RECOVERY_CHECK` ($Z < 1.5$ sustained for $K=12$ readings).
+   - All trade entry authorizations are blocked unless the system state is strictly `NORMAL`.
+
+3. **Stage 3 — Kronos H4 Regime Classification**:
+   - Evaluates macro technical context using exactly 512 closed H4 bars (~3.5–4 months of calendar gold data).
+   - Validates chronological ascending order ($O(N)$ sweep) and applies `RollingFeatureScaler` isolated strictly to the 512-bar window to eliminate lookahead bias.
+   - Executes deterministic forward pass via ONNX Runtime CPU (`CPUExecutionProvider`) in under 5 milliseconds.
+   - Emits regime probabilities for `BULLISH_TRENDING`, `BEARISH_TRENDING`, and `RANGING` with a confidence threshold $\ge 0.60$.
+
+4. **Stage 4 — Strategy Setup & Candidate Generation**:
+   - **Volatility Breakout (M15)**: Penetration of 20-period Donchian channel with ATR volatility expansion ($>1.2\times$ MA) aligned with the active H4 regime.
+   - **Positioning Contrarian (H1/M15)**: Exploits retail crowding extremes ($>75\%$ net long or net short) combined with local breakout confirmation.
+   - **Macro Intermarket**: Directional filter based on 20-day delta changes in US Real Yields (TIPS 10Y) and the US Dollar Index.
+   - **Adaptive Mean-Reversion (M15)**: Activated strictly when the H4 regime is confirmed `RANGING`, utilizing adaptive Bollinger/volatility bands with RSI(14) overbought/oversold confirmation.
+   - Produces an immutable `TradeSignal` requiring a minimum Reward-to-Risk ratio $\ge 2.0$.
+
+5. **Stage 5 — Master Risk Gate & Sizing (Go Daemon)**:
+   - Out-of-process Go supervisor queries SQLite WAL in pure read-only mode (`query_only(true)`).
+   - Validates five pre-order prerequisites: equity $>0$, daily loss $<2.0\%$, cumulative drawdown $<10.0\%$, open positions $=0$, daily trade count $<5$.
+   - Applies graduated liquidity sizing based on tick volume proxy:
+     - Normal volume ($Z_{volume} \ge -2.0$): 100% allocation (0.5% risk budget).
+     - Thin liquidity ($Z_{volume} < -2.0$): Scaled down to 50% lot size using scale-before-floor math.
+     - Rollover / bank holiday: 0% sizing (blocked).
+
+6. **Stage 6 — Broker Bridge Execution**:
+   - Interacts with MetaTrader 5 via `ExnessBrokerBridge`, synchronized across threads using `threading.RLock()`.
+   - Attaches server-side Stop Loss (`1.5 * ATR(14)`) and Take Profit directly to the broker order. Virtual or client-side stop losses are strictly forbidden.
+   - Dynamically selects order filling modes (IOC / FOK) respecting broker account capabilities.
+
+7. **Stage 7 — Active 5-Layer Exit Management**:
+   - **Layer 1**: Fixed server-side SL/TP residing permanently on Exness broker servers.
+   - **Layer 2**: Trailing stop advances to Break-Even when floating profit reaches $+1.0\text{R}$, incorporating dynamic spread buffers.
+   - **Layer 3**: Automatic partial liquidation (50% lot size) executed upon reaching $+1.0\text{R}$ target.
+   - **Layer 4**: Time invalidation forcefully closes positions that remain stagnant after 8 M15 candles (2 hours).
+   - **Layer 5**: Regime invalidation immediately liquidates positions if the H4 market regime flips contrary to the trade.
+   - **Hard Rollover Liquidation**: All positions liquidated exactly 15 minutes before daily bank break (`20:44 UTC` Summer / `21:44 UTC` Winter).
+
+8. **Stage 8 — Reporting & Dual-Stream Telegram Distribution**:
+   - **Admin Control Panel**: Private communication with whitelisted integer `TELEGRAM_ADMIN_ID`, protected by 60s single-use nonces and 15s two-step confirmations for destructive actions (`/pause`, `/resume`, `/force_close`, `/killswitch`).
+   - **Signal Broadcast Channel**: Emits structured trade alerts using strict terminology rules (zero cloud AI wording, zero speculative jargon) accompanied by rendered candlestick chart images.
+   - **Daily Session Metrics**: Generates automated end-of-session reports including Net P&L, realized win ratio, max intraday drawdown, and audit ledger links.
+
+---
+
+## 3. The 5 Absolute Invariants (Non-Negotiable Commandments)
 
 > ⚠️ **CRITICAL WARNING FOR AI AGENTS & DEVELOPERS**:
 > The following invariants are immutable hard boundaries. Any pull request, modification, or automated action that violates, loosens, or bypasses these constraints will be rejected immediately with zero exceptions.
@@ -59,7 +177,7 @@ The engine operates on a strict **zero-LLM live execution boundary**: large lang
 
 ---
 
-## 3. Directory Map & Component Architecture
+## 4. Directory Map & Component Architecture
 
 ```
 AETERNA - QUANT PROJECT/
@@ -112,7 +230,7 @@ AETERNA - QUANT PROJECT/
 
 ---
 
-## 4. Local Environment Setup
+## 5. Local Environment Setup
 
 ### Prerequisites
 - **Operating System**: Windows 11 (64-bit) native environment.
@@ -147,7 +265,7 @@ uv run python scripts/setup_secrets.py
 
 ---
 
-## 5. Agentic Workflow (Tier A Parallel Protocol)
+## 6. Agentic Workflow (Tier A Parallel Protocol)
 
 To ensure high-velocity development without introducing architectural drift, merge conflicts, or financial regressions, engineering tasks are managed through the **Tier A Parallel Protocol**:
 
@@ -184,7 +302,7 @@ To ensure high-velocity development without introducing architectural drift, mer
 
 ---
 
-## 6. Verification & Audit Commands
+## 7. Verification & Audit Commands
 
 Never assume correctness without verifiable mechanical proof. All pull requests must pass the following multi-stack audit gates locally prior to submission:
 
@@ -236,6 +354,6 @@ VERDICT: ECOSYSTEM SAFE (Lolos Seluruh Pemeriksaan)
 
 ---
 
-## 7. License & Operational Governance
+## 8. License & Operational Governance
 
 Proprietary quantitative software. Confidential and privileged. Unauthorized distribution, reproduction, or execution on live trading capital without verified safety gates is strictly prohibited.
