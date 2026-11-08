@@ -17,6 +17,9 @@ jobs:
   security-secrets-scan:
     name: Secrets Scan (Gitleaks)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
