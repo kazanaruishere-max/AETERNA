@@ -21,6 +21,7 @@ Tier: Tier B
 # pyright: reportMissingImports=false
 # pyright: reportUntypedBaseClass=false
 # pyright: reportGeneralTypeIssues=false
+# pyright: reportAssignmentType=false
 
 from __future__ import annotations
 
