@@ -120,15 +120,20 @@ class KronosH4RegimeEngine(KronosInferenceEngine):
             "RANGING": p_range,
         }
 
-        if p_bull >= self.confidence_threshold and p_bull > p_bear:
+        # Hard Confidence Gate Mandate:
+        # A directional trending regime is confirmed ONLY if mathematical confidence >= 0.60.
+        # If the model is uncertain or hesitating (max_prob < 0.60), the regime is strictly
+        # forced to "RANGING" to ensure ZERO TRADES are opened on Kronos ambiguity.
+        if p_bull >= self.confidence_threshold and p_bull > p_bear and p_bull > p_range:
             regime = "BULLISH_TRENDING"
             confidence = p_bull
-        elif p_bear >= self.confidence_threshold and p_bear > p_bull:
+        elif p_bear >= self.confidence_threshold and p_bear > p_bull and p_bear > p_range:
             regime = "BEARISH_TRENDING"
             confidence = p_bear
         else:
             regime = "RANGING"
-            confidence = p_range
+            # In ranging fallback, confidence reflects either ranging probability or residual certainty
+            confidence = p_range if p_range >= self.confidence_threshold else max(p_range, 1.0 - max(p_bull, p_bear))
 
         return ModelInferenceResult(
             model_id=self.model_id,

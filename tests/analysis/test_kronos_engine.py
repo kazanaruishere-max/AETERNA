@@ -195,3 +195,35 @@ def test_rolling_scaler_integration_zero_leakage() -> None:
     assert rerun_result.regime == result_512.regime
     assert rerun_result.confidence == pytest.approx(result_512.confidence)
     assert rerun_result.probabilities == pytest.approx(result_512.probabilities)
+
+
+def test_hard_confidence_gate_hesitation_forced_to_ranging() -> None:
+    """Verify Hard Confidence Gate: P(Bull) < 0.60 (e.g. 45%) MUST be forced to RANGING."""
+    engine = KronosH4RegimeEngine(confidence_threshold=0.60)
+
+    # Mock the internal session or momentum evaluator to return hesitation probabilities:
+    # Bull=45%, Bear=25%, Range=30% (Bullish is highest, but < 60%)
+    engine._evaluate_benchmark_momentum = lambda _norm: (0.45, 0.25, 0.30)  # type: ignore[assignment]
+
+    candles = _make_h4_candles(512)
+    result = engine.infer_regime(candles)
+
+    # Must be forced to RANGING to prevent premature trade entry
+    assert result.regime == "RANGING"
+    assert result.probabilities["BULLISH_TRENDING"] == pytest.approx(0.45)
+    assert result.probabilities["BEARISH_TRENDING"] == pytest.approx(0.25)
+    assert result.probabilities["RANGING"] == pytest.approx(0.30)
+
+    # Repeat for Bearish hesitation: Bear=48%, Bull=22%, Range=30%
+    engine._evaluate_benchmark_momentum = lambda _norm: (0.22, 0.48, 0.30)  # type: ignore[assignment]
+    result_bear = engine.infer_regime(candles)
+
+    assert result_bear.regime == "RANGING"
+    assert result_bear.probabilities["BEARISH_TRENDING"] == pytest.approx(0.48)
+
+    # Repeat for Clear Trend: Bull=65%, Bear=10%, Range=25% -> MUST be confirmed as BULLISH_TRENDING
+    engine._evaluate_benchmark_momentum = lambda _norm: (0.65, 0.10, 0.25)  # type: ignore[assignment]
+    result_confirmed = engine.infer_regime(candles)
+
+    assert result_confirmed.regime == "BULLISH_TRENDING"
+    assert result_confirmed.confidence == pytest.approx(0.65)
