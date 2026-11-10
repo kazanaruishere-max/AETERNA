@@ -34,7 +34,7 @@ class ExnessClient:
     def __init__(
         self,
         login: int | None = None,
-        password: str | None = None,
+        password: Any | None = None,
         server: str | None = None,
         symbol: str = "XAUUSD",
     ) -> None:
@@ -91,11 +91,19 @@ class ExnessClient:
                 return False
 
             if self.login and self.password and self.server:
-                authorized = self._mt5.login(
-                    login=self.login,
-                    password=self.password,
-                    server=self.server,
-                )
+                get_secret = getattr(self.password, "get_secret_value", None)
+                pass_str: str = str(get_secret()) if callable(get_secret) else str(self.password)
+                try:
+                    authorized = bool(
+                        self._mt5.login(
+                            login=int(self.login),
+                            password=pass_str,
+                            server=str(self.server),
+                        )
+                    )
+                finally:
+                    del pass_str
+
                 if not authorized:
                     err = self._mt5.last_error()
                     logger.error("MT5 login failed: %s", err)
