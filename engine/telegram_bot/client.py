@@ -519,6 +519,13 @@ class TelegramControlBot:
             self._is_paused = False
         return "State: NORMAL." if ok else "Gagal mengubah state ke NORMAL."
 
+    def send_initial_dashboard(self, admin_id: int) -> bool:
+        """Proactively push the /menu Single-Entry Dashboard to the admin upon startup."""
+        text = self._render_dashboard(admin_id)
+        keyboard = self.build_main_control_keyboard(admin_id)
+        payload = self._message(admin_id, text, keyboard)
+        return self.send(payload)
+
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
