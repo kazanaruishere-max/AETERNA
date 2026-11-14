@@ -735,6 +735,24 @@ async def test_async_decoupling_off_event_loop() -> None:
     assert res["method"] == "sendMessage"
 
 
+def test_push_dashboard_sends_menu_to_admin_chat() -> None:
+    """Startup push: dashboard + inline keyboard go out without any incoming update."""
+    mock_session = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"ok": True, "result": {}}
+    mock_session.post.return_value = mock_response
+    bot, *_ = _make_bot(session=mock_session)
+
+    assert bot.push_dashboard(ADMIN_ID) is True
+
+    body = mock_session.post.call_args.kwargs["json"]
+    assert "sendMessage" in mock_session.post.call_args.args[0]
+    assert body["chat_id"] == ADMIN_ID
+    assert "AETERNA" in body["text"].upper()
+    assert body["reply_markup"]["inline_keyboard"]
+
+
 def test_dispatch_update_delivers_payload_and_answers_callback() -> None:
     """dispatch_update handles, answers callback, and transmits outgoing payload."""
     mock_session = MagicMock()

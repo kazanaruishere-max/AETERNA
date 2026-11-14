@@ -231,6 +231,16 @@ class TelegramControlBot:
             logger.warning("Telegram %s failed: %s", method, type(exc).__name__)
             return False
 
+    def push_dashboard(self, chat_id: int) -> bool:
+        """Proactively send the /menu dashboard (startup notice, no prior user message)."""
+        return self.send(
+            self._message(
+                chat_id,
+                self._render_dashboard(chat_id),
+                self.build_main_control_keyboard(chat_id),
+            )
+        )
+
     def _api_url(self, method: str) -> str:
         return f"{self._api_base_url}/bot{self._bot_token()}/{method}"
 

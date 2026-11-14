@@ -33,6 +33,7 @@ from engine.security.dpapi import (
     SecretString,
     decrypt_dpapi,
     encrypt_dpapi,
+    load_credentials_from_env,
     load_encrypted_secrets,
     save_encrypted_secrets,
 )
@@ -54,7 +55,9 @@ def test_secret_string_jit_decryption_no_plaintext_in_memory() -> None:
     # 2. Plaintext must NOT appear anywhere in the object dictionary or attribute values
     for val in vars(sec).values():
         if isinstance(val, (str, bytes)):
-            assert raw_secret.encode("utf-8") not in (val if isinstance(val, bytes) else val.encode("utf-8"))
+            assert raw_secret.encode("utf-8") not in (
+                val if isinstance(val, bytes) else val.encode("utf-8")
+            )
 
     # 3. get_secret_value() must decrypt Just-In-Time (JIT) to return the original plaintext
     assert sec.get_secret_value() == raw_secret
@@ -112,7 +115,9 @@ def test_dpapi_application_entropy_isolation() -> None:
 
     # Decrypt with WRONG entropy must fail-fast with DPAPIDesyncError
     wrong_entropy = b"UNAUTHORIZED_MALICIOUS_APP_SALT"
-    with pytest.raises(DPAPIDesyncError, match="DPAPI master key or entropy desynchronized"):
+    with pytest.raises(
+        DPAPIDesyncError, match="DPAPI master key or entropy desynchronized"
+    ):
         decrypt_dpapi(ciphertext, entropy=wrong_entropy)
 
 
@@ -186,7 +191,10 @@ def test_secrets_persistence_roundtrip(tmp_path: Path) -> None:
 
     assert str(loaded["mt5_password"]) == "***MASKED***"
     assert loaded["mt5_password"].get_secret_value() == "MyExnessSecurePassword999"
-    assert loaded["telegram_bot_token"].get_secret_value() == "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+    assert (
+        loaded["telegram_bot_token"].get_secret_value()
+        == "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+    )
 
 
 def test_missing_secrets_file_raises_not_found(tmp_path: Path) -> None:
@@ -197,6 +205,25 @@ def test_missing_secrets_file_raises_not_found(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
+def test_env_loader_strips_inline_comment_and_quotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inline `.env` comments must not corrupt numeric IDs (regression: admin ID became non-integer)."""
+    (tmp_path / ".env").write_text(
+        'TELEGRAM_BOT_TOKEN="123:abc"\n'
+        "TELEGRAM_ADMIN_USER_ID=9876543210  # Admin ID, do not share\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    creds = load_credentials_from_env()
+
+    assert creds is not None
+    assert creds["telegram_admin_id"] == 9876543210
+    assert isinstance(creds["telegram_bot_token"], SecretString)
+    assert creds["telegram_bot_token"].get_secret_value() == "123:abc"
+
+
 def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
     """Verify scripts/setup_secrets.py runs cleanly and writes encrypted payload."""
     test_out = tmp_path / ".secrets.enc"
@@ -210,9 +237,7 @@ def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
     def mock_getpass(_prompt: str = "") -> str:
         return next(passwords)
 
-    with patch("builtins.input", mock_input), patch(
-        "getpass.getpass", mock_getpass
-    ):
+    with patch("builtins.input", mock_input), patch("getpass.getpass", mock_getpass):
         exit_code = run_setup(output_path=test_out)
 
     assert exit_code == 0
