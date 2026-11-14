@@ -204,6 +204,7 @@ def test_missing_secrets_file_raises_not_found(tmp_path: Path) -> None:
         load_encrypted_secrets(non_existent)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_env_loader_strips_inline_comment_and_quotes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
