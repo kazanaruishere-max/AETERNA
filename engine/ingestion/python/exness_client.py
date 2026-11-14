@@ -90,7 +90,15 @@ class ExnessClient:
                 logger.error("MT5 initialize() failed with error: %s", err)
                 return False
 
-            if self.login and self.password and self.server:
+            # Check if terminal is already authorized with the target account
+            already_authorized = False
+            if hasattr(self._mt5, "account_info"):
+                acc = self._mt5.account_info()
+                if acc is not None and self.login and getattr(acc, "login", None) == int(self.login):
+                    already_authorized = True
+                    logger.info("MT5 terminal already active and authorized for account %s", self.login)
+
+            if not already_authorized and self.login and self.password and self.server:
                 get_secret = getattr(self.password, "get_secret_value", None)
                 pass_str: str = str(get_secret()) if callable(get_secret) else str(self.password)
                 try:
