@@ -233,13 +233,7 @@ class TelegramControlBot:
 
     def push_dashboard(self, chat_id: int) -> bool:
         """Proactively send the /menu dashboard (startup notice, no prior user message)."""
-        return self.send(
-            self._message(
-                chat_id,
-                self._render_dashboard(chat_id),
-                self.build_main_control_keyboard(chat_id),
-            )
-        )
+        return self.send_initial_dashboard(chat_id)
 
     def _api_url(self, method: str) -> str:
         return f"{self._api_base_url}/bot{self._bot_token()}/{method}"
@@ -528,6 +522,13 @@ class TelegramControlBot:
         if ok:
             self._is_paused = False
         return "State: NORMAL." if ok else "Gagal mengubah state ke NORMAL."
+
+    def send_initial_dashboard(self, admin_id: int) -> bool:
+        """Proactively push the /menu Single-Entry Dashboard to the admin upon startup."""
+        text = self._render_dashboard(admin_id)
+        keyboard = self.build_main_control_keyboard(admin_id)
+        payload = self._message(admin_id, text, keyboard)
+        return self.send(payload)
 
     # ------------------------------------------------------------------
     # Rendering

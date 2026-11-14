@@ -203,7 +203,13 @@ async def main_async() -> int:
             "Telegram Control Panel initialized for Administrator ID: %d",
             tg_admin_id,
         )
-        if not control_bot.push_dashboard(tg_admin_id):
+        # Proactively push the initial Control Panel dashboard to the Operator
+        logger.info("Sending initial Control Panel dashboard to Admin Telegram...")
+        if control_bot.send_initial_dashboard(tg_admin_id):
+            logger.info(
+                "Control Panel dashboard delivered to Telegram admin successfully!"
+            )
+        else:
             logger.warning(
                 "Startup dashboard push failed; open the bot and send /menu. "
                 "Verify the bot token and that this Telegram account has started the bot."
