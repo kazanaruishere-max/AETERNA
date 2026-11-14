@@ -22,6 +22,7 @@ from __future__ import annotations
 import ctypes
 import json
 import logging
+import re
 import sys
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -205,7 +206,11 @@ def decrypt_dpapi(
         # 0x8009000B: NTE_BAD_KEY_STATE
         # 0x80090016: NTE_KEYSET_NOT_DEF
         desync_codes = {13, 0x80090006, 0x8009000B, 0x80090016, -2146893818}
-        if err_code in desync_codes or (err_code & 0xFFFFFFFF) in {0x80090006, 0x8009000B, 0x80090016}:
+        if err_code in desync_codes or (err_code & 0xFFFFFFFF) in {
+            0x80090006,
+            0x8009000B,
+            0x80090016,
+        }:
             raise DPAPIDesyncError(
                 f"DPAPI master key or entropy desynchronized (Win32 error: {err_code}, "
                 f"hex: 0x{err_code & 0xFFFFFFFF:x}). Windows user password may have changed or salt mismatch."
@@ -255,6 +260,15 @@ def save_encrypted_secrets(
     logger.info("Encrypted secrets saved to %s", path)
 
 
+def _clean_env_value(raw: str) -> str:
+    """Strip whitespace, wrapping quotes, and trailing inline `# comment` from a .env value."""
+    val = raw.strip()
+    if val[:1] in ("'", '"'):
+        end = val.find(val[0], 1)
+        return val[1:end] if end != -1 else val[1:]
+    return re.split(r"\s+#", val, maxsplit=1)[0].strip()
+
+
 def load_credentials_from_env() -> dict[str, Any] | None:
     """Read credentials from .env file or environment variables if present."""
     import os
@@ -270,8 +284,7 @@ def load_credentials_from_env() -> dict[str, Any] | None:
                     if not line or line.startswith("#") or "=" not in line:
                         continue
                     key, val = line.split("=", 1)
-                    val = val.strip().strip("'\"")
-                    env_vars[key.strip()] = val
+                    env_vars[key.strip()] = _clean_env_value(val)
         except OSError as exc:
             logger.warning("Could not read .env file: %s", exc)
 
@@ -290,10 +303,14 @@ def load_credentials_from_env() -> dict[str, Any] | None:
     if token:
         res["telegram_bot_token"] = SecretString.from_plaintext(token)
     if admin_id_str:
-        if admin_id_str.isdigit() or (admin_id_str.startswith("-") and admin_id_str[1:].isdigit()):
+        if admin_id_str.isdigit() or (
+            admin_id_str.startswith("-") and admin_id_str[1:].isdigit()
+        ):
             res["telegram_admin_id"] = int(admin_id_str)
         else:
-            logger.warning("Invalid non-integer TELEGRAM_ADMIN_ID in environment: %s", admin_id_str)
+            logger.warning(
+                "Invalid non-integer TELEGRAM_ADMIN_ID in environment: %s", admin_id_str
+            )
 
     channel_id = get_val("TELEGRAM_CHANNEL_ID") or get_val("TELEGRAM_SIGNAL_CHANNEL_ID")
     if channel_id:
@@ -304,7 +321,9 @@ def load_credentials_from_env() -> dict[str, Any] | None:
         if mt5_login_str.isdigit():
             res["mt5_login"] = int(mt5_login_str)
         else:
-            logger.warning("Invalid non-integer EXNESS_MT5_LOGIN in environment: %s", mt5_login_str)
+            logger.warning(
+                "Invalid non-integer EXNESS_MT5_LOGIN in environment: %s", mt5_login_str
+            )
 
     mt5_pass = get_val("EXNESS_MT5_PASSWORD") or get_val("MT5_PASSWORD")
     if mt5_pass:
@@ -321,17 +340,19 @@ def load_trading_secrets(
     filepath: Path | str = DEFAULT_SECRETS_PATH,
     entropy: bytes = DEFAULT_APP_ENTROPY,
 ) -> dict[str, Any]:
-    """Unified credential loader: checks DPAPI (.secrets.enc) first, falls back to .env."""
+    """Unified credential loader: checks .env first for quick local developer override, then DPAPI (.secrets.enc)."""
+    env_creds = load_credentials_from_env()
+    if env_creds:
+        return env_creds
+
     path = Path(filepath)
     if path.is_file():
         try:
             return load_encrypted_secrets(path, entropy=entropy)
         except (DPAPIError, OSError, ValueError) as exc:
-            logger.warning("Failed to decrypt DPAPI secrets (%s), trying .env fallback...", exc)
-
-    env_creds = load_credentials_from_env()
-    if env_creds:
-        return env_creds
+            logger.warning(
+                "Failed to decrypt DPAPI secrets (%s), no credentials found...", exc
+            )
 
     raise FileNotFoundError(
         "No credentials found. Either create .env (see .env.example) or run: uv run python scripts/setup_secrets.py"

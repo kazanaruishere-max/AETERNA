@@ -59,9 +59,7 @@ def setup_runtime_logging() -> None:
 class MockEmergencyHandler(ExecutionEmergencyHandler):
     """Fallback emergency handler during runtime initialization."""
 
-    def execute_force_close_all(
-        self, max_deviation_pts: int = 50
-    ) -> list[Any]:
+    def execute_force_close_all(self, max_deviation_pts: int = 50) -> list[Any]:
         logger.warning(
             "Emergency FORCE CLOSE ALL triggered (slippage tolerance: %d pts)",
             max_deviation_pts,
@@ -89,9 +87,7 @@ class RuntimeMetricsCollector:
         self.current_equity = start_equity
         self.start_time = time.time()
 
-    def collect_daily_metrics(
-        self, target_date: str | None = None
-    ) -> DailyMetrics:
+    def collect_daily_metrics(self, target_date: str | None = None) -> DailyMetrics:
         now_date = time.strftime("%Y-%m-%d", time.gmtime())
         return DailyMetrics(
             date_utc=target_date or now_date,
@@ -207,16 +203,21 @@ async def main_async() -> int:
             "Telegram Control Panel initialized for Administrator ID: %d",
             tg_admin_id,
         )
-
         # Proactively push the initial Control Panel dashboard to the Operator
         logger.info("Sending initial Control Panel dashboard to Admin Telegram...")
         if control_bot.send_initial_dashboard(tg_admin_id):
-            logger.info("Control Panel dashboard delivered to Telegram admin successfully!")
+            logger.info(
+                "Control Panel dashboard delivered to Telegram admin successfully!"
+            )
         else:
-            logger.warning("Failed to deliver initial Telegram dashboard (verify bot token / chat with bot).")
+            logger.warning(
+                "Startup dashboard push failed; open the bot and send /menu. "
+                "Verify the bot token and that this Telegram account has started the bot."
+            )
     else:
         logger.warning(
-            "Telegram credentials incomplete in .secrets.enc; Control Panel disabled."
+            "Telegram credentials missing or invalid; Control Panel disabled. "
+            "Check TELEGRAM_BOT_TOKEN and numeric TELEGRAM_ADMIN_USER_ID in .env."
         )
 
     # 4. Graceful Shutdown Handlers

@@ -6,6 +6,8 @@
 *.pem
 *.enc
 data/.secrets.enc
+ea/Config/*.ini
+!ea/Config/.gitkeep
 
 # Local databases and runtime IPC
 *.db
@@ -27,6 +29,7 @@ data/
 .worktrees/
 .handoff/
 .opencode/plans/
+docs/discussions/
 
 # Python cache and environments
 __pycache__/
