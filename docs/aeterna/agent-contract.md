@@ -146,7 +146,50 @@ next_action: "Langkah terarah berikutnya"
 
 ---
 
-## 8. Checklist Self-Check 10 Poin (Pra-Output)
+## 8. Evidence Taxonomy & Research Envelope (Anti-Halusinasi)
+
+Setiap klaim eksternal (literatur, anomali pasar, aturan venue, angka kinerja) wajib melewati `aeterna-research` dan diberi **tepat satu** tag status:
+
+| Tag | Arti | Boleh dipakai di desain? |
+| :--- | :--- | :---: |
+| `EVIDENCE` | Ada sumber + sampel + periode + asumsi biaya | Ya, dengan sitasi |
+| `HYPOTHESIS` | Logis, belum diuji di data kita | Ya, wajib ada kriteria falsifikasi |
+| `CONTRADICTED` | Ada bukti berlawanan | Ya, sebutkan sumber & kondisi |
+| `UNVERIFIED` | Tidak ada sumber yang bisa dicek ulang | **Tidak** |
+
+Verdict dipisahkan dari tag: `ADOPT` | `TEST_FIRST` | `REJECT`, ditulis di akhir brief.
+
+Setiap item `EVIDENCE` wajib memuat: URL, terbitan, tahun, tanggal akses, aset, jumlah observasi, periode, horizon, dan status biaya transaksi. Bila transferabilitas ke horizon M15–H1 retail belum jelas, statusnya **turun** menjadi `HYPOTHESIS`.
+
+Brief disimpan di `.handoff/research/BRIEF-<slug>.md` dan wajib mengekspos `unverified_items` secara terbuka, bukan menyembunyikannya.
+
+---
+
+## 9. Roster Agen & Aturan Rasionalisasi
+
+Roster aktif per v2 (8 agen + 1 dorman):
+
+| Agen | Status | Domain Tier A yang dipegang |
+| :--- | :--- | :--- |
+| `aeterna-lead` | primary | keputusan akhir, task packet, fase P0–P4 |
+| `aeterna-research` | aktif | tidak memegang kode; hanya `.handoff/research/` |
+| `aeterna-architect` | aktif | `db/`, `engine/shared/db/`, kontrak antarmuka |
+| `aeterna-strategy` | aktif | `instruments/*/strategies/` |
+| `aeterna-backtest` | aktif | `engine/analysis_engine/` |
+| `aeterna-risk` | aktif | `engine/risk_gate/`, `engine/state_machine/`, `engine/watchdog/` |
+| `aeterna-security` | aktif | `engine/security/`, `scripts/` |
+| `aeterna-ingestion` | aktif | `engine/ingestion/` |
+| `aeterna-verifier` | aktif | `tests/`, audit independen |
+| `aeterna-execution` | **dorman** (aktif di fase P4) | `engine/execution/`, `engine/telegram_bot/` |
+
+Aturan rasionalisasi:
+1. **Dilarang melebur agen pemilik modul Tier A ke agen pengaudit.** Two-Key Review (`code-ownership.md §2`) mensyaratkan perancang dan pengaudit adalah pihak berbeda. Meleburnya membatalkan kontrol, bukan menyederhanakan.
+2. Agen hanya boleh dimatikan/dorman jika domainnya tidak dipakai pada fase aktif, dan status itu wajib tercatat di tabel ini.
+3. Setiap perubahan roster wajib disertai pembaruan `code-ownership.md` pada commit yang sama.
+
+---
+
+## 10. Checklist Self-Check 10 Poin (Pra-Output)
 
 Sebelum mengirimkan output, agen wajib memverifikasi secara internal:
 1. [ ] Apakah `context_manifest` telah mencakup semua dokumen rujukan wajib?

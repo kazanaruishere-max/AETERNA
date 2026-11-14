@@ -31,6 +31,14 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `tests/` | Golden tests deterministik & suite pengujian otomatis | `aeterna-verifier` | OMP | A | `uv run pytest tests/ -v` |
 | `scripts/` | Skrip verifikasi ekosistem 5-pilar dan audit keamanan lokal (SCA) | `aeterna-security` | Lead / Verifier | A | `uv run python scripts/audit_security.py` |
 | `docs/` | Dokumentasi arsitektur, PRD, security, dan operasional | `aeterna-architect` | Lead / Manual | C | Doc review |
+| `docs/aeterna/ea-development-and-optimization-guide.md` | Panduan teknik resmi optimasi MQL5 EA & multi-agent workflow | `aeterna-lead` | Lead | A | Invariant compliance audit |
+| `docs/aeterna/ea-testing-and-certification-protocol.md` | Protokol sertifikasi institusional 6-tahap & kriteria live ready | `aeterna-backtest` | Lead | A | Institutional testing audit |
+| `.handoff/research/` | Brief riset eksternal berlabel bukti (tanpa kode produksi) | `aeterna-research` | Lead | C | Review taksonomi bukti `agent-contract.md §8` |
+| `ea/AeternaEA/` | Native MQL5 Expert Advisor Engine (Golden Baseline v1.0, Tier A) | `aeterna-strategy` | Lead | A | `metaeditor64.exe` compile + MT5 Strategy Tester |
+| `ea/AeternaEA_v1_Baseline/` | Frozen immutable backup of verified v1.0 baseline (Disaster Recovery) | `aeterna-lead` | Lead | A | SHA256 checksum parity |
+| `ea/experiments/` | Workspace klon eksperimen MQL5 EA (ADR-009) | `aeterna-strategy` | Lead | A | Compile pass + Strategy Tester benchmark |
+| `ea/Scripts/` | PowerShell automation harness for headless batch strategy testing | `aeterna-verifier` | Lead | B | CLI batch execution pass |
+| `ea/Reports/` | Historical backtest reports, charts, and metrics summaries | `aeterna-verifier` | Lead | C | Data audit verification |
 
 ---
 

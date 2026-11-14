@@ -27,7 +27,7 @@ Saat merancang eksekusi order MT5 atau kontrol bot Telegram, kamu WAJIB memanggi
 - Jika menganalisis error kode pengembalian MT5 (`TRADE_RETCODE_*`) atau socket timeout ──► panggil `skill(name="diagnose")`
 
 ## MISSION
-Menjamin setiap order yang dikirim ke Exness memiliki parameter Stop Loss dan Take Profit yang terpasang langsung di server broker (*server-side attached*), mencegah *double-order / slippage desync*, dan mengamankan bot Telegram dari pengambilalihan kendali (*bot hijacking*).
+Menjamin setiap order yang dikirim ke Exness memiliki parameter Stop Loss dan Take Profit yang terpasang langsung di server broker (*server-side attached*), mencegah *double-order / slippage desync*, mencegah flooding request modifikasi via rate limiter, dan mengamankan bot Telegram dari pengambilalihan kendali (*bot hijacking*).
 
 ## REQUIRED CONTEXT
 1. `docs/AGENTS.local.md`
@@ -35,18 +35,25 @@ Menjamin setiap order yang dikirim ke Exness memiliki parameter Stop Loss dan Ta
 3. `architecture.md §3.4, §5.2, §5.3, §6.3`
 4. `security.md §1, §2`
 5. `docs/aeterna/invariant-cheatsheet.md`
+6. `docs/aeterna/ea-development-and-optimization-guide.md`
+7. `ea/AeternaEA/Include/ExitManager.mqh`
 
 ## FORBIDDEN CONTEXT
 - Dilarang merancang client-side virtual Stop Loss (SL wajib tercatat fisik di server Exness).
+- Dilarang membiarkan `PositionModify` dieksekusi per-tick tanpa deadband minimal 30 points dan cooldown minimal 5 detik.
 - Dilarang menggunakan Telegram Webhook publik tanpa pengamanan IP whitelist (gunakan Long Polling outbound).
 
 ## PROCEDURE
-1. **Context Manifest**: Baca bab eksekusi order MT5 dan access control Telegram.
+1. **Context Manifest**: Baca bab eksekusi order MT5, rate-limiting broker, dan access control Telegram.
 2. **Server-Side Order Contract**:
-   - Susun struktur `OrderSend` MT5 yang memuat harga entry, lot, SL, dan TP dalam satu paket atomik.
-   - Jika broker menolak pemasangan SL/TP karena melanggar Stop Level, batalkan order seketika (*fail-safe reject*).
-3. **Trailing Stop Server Modify**: Rancang fungsi `order_modify` MT5 yang memperbarui level SL di server broker saat floating profit mencapai $+1.0\text{R}$.
-4. **Position Reconciliation**: Rancang polling heartbeat untuk memeriksa apakah posisi di database SQLite selaras dengan posisi nyata di terminal MT5.
+   - Susun struktur `OrderSend` MT5 yang memuat harga entry, lot, SL, dan TP dalam satu paket atomik dengan mode `ORDER_FILLING_IOC` dan deviasi 50 points.
+   - Validasi pre-flight Stop Level: $|Entry - SL| \ge \max(\text{StopLevel}, \text{Spread}) + 50\text{ pts}$.
+   - Terapkan *Post-Execution Verification Gate*: Verifikasi fisik `PositionGetDouble(POSITION_SL) > 0.0`. Jika naked, eksekusi likuidasi pasar darurat seketika.
+3. **Dual-Constraint Trailing Rate Limiter**:
+   - Terapkan aturan `CanModifyPosition()`: Jeda waktu minimal 5.0 detik DAN pergeseran SL minimal 30 points ($0.30) untuk mengeliminasi Error 10018 (`TRADE_RETCODE_TOO_MANY_REQUESTS`).
+4. **Position Reconciliation & Disaster Recovery**:
+   - Rancang polling heartbeat untuk memeriksa keselarasan posisi database dengan terminal MT5.
+   - Cantumkan aplikasi *Exness Trade Mobile App* sebagai instrumen DR primer jika terminal lokal crash.
 5. **Telegram Control Interface**:
    - Validasi ketat `user_id == TELEGRAM_ADMIN_ID` (integer whitelist, silent drop untuk selain admin).
    - Generate callback data dengan nonce 60 detik (*ephemeral token*).

@@ -12,7 +12,7 @@ metadata:
 Mengatur standarisasi pembuatan paket tugas mandiri (*task packet*) dari OpenCode ke OMP (`omp.exe`), pembatasan file yang boleh disentuh (*scope boundary*), dan format evaluasi hasil pekerjaan agar bebas dari celah kritis.
 
 # When to use
-- Gunakan saat `aeterna-briefer` mengubah rancangan teknis yang telah disetujui menjadi paket tugas siap eksekusi.
+- Gunakan saat `aeterna-lead` mengubah rancangan teknis yang telah disetujui menjadi paket tugas siap eksekusi.
 - Gunakan saat memvalidasi apakah paket tugas sudah memenuhi Definition of Ready (DoR).
 - Gunakan saat membaca dan memverifikasi laporan balik hasil kerja OMP.
 

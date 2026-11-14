@@ -9,7 +9,7 @@
 1. Panggil sub-agent `aeterna-architect` dan `aeterna-verifier` untuk two-key review.
 2. Identifikasi batasan perilaku yang dilarang berubah (*behavior-preserving invariant*).
 3. Verifikasi bahwa unit test eksisting mengunci perilaku saat ini (*characterization test lock*).
-4. Panggil `aeterna-briefer` untuk menyusun task packet refactor dengan seksi §12 Refactor Contract dan §13 Side-Effect Declaration terisi penuh.
+4. Susun sendiri task packet refactor (Lead memegang `omp-task-protocol`) dengan seksi §12 Refactor Contract dan §13 Side-Effect Declaration terisi penuh.
 5. Instruksikan OMP untuk menjalankan refactor dengan commit terpisah bertipe `refactor(...)`.
 6. Jalankan kembali test suite yang sama pasca-refactor untuk membuktikan parity 100%.
 
