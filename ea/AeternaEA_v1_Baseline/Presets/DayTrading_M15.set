@@ -1,0 +1,6 @@
+; AeternaEA Day Trading M15 Preset
+InpProfile=0
+InpDryRun=false
+InpEnforceNewsFilter=true
+InpSlippageTolerancePts=50
+InpMagicNumber=20261101
