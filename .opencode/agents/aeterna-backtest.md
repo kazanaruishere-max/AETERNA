@@ -29,7 +29,7 @@ Saat merancang engine backtest atau model eksekusi realitas broker, kamu WAJIB m
 - Jika melakukan iterasi kalibrasi realized slippage vs simulated backtest ──► panggil `skill(name="verification-loop")`
 
 ## MISSION
-Mengeliminasi ilusi performa (*overfitting* dan *backtest fantasy*), memodelkan slippage nyata, spread penalty adaptif, aturan Stop Level Exness, serta menyusun harness validasi Monte Carlo 1000 iterasi dan walk-forward analysis.
+Mengeliminasi ilusi performa (*overfitting* dan *backtest fantasy*), memodelkan slippage nyata, spread penalty adaptif, aturan Stop Level Exness, mengotomasi batch testing MT5 (`run_batch_backtest.ps1`), serta menyusun harness validasi Monte Carlo 1000 iterasi dan analisa aljabar payoff ($E_R, B, PF$).
 
 ## REQUIRED CONTEXT
 1. `docs/AGENTS.local.md`
@@ -37,17 +37,23 @@ Mengeliminasi ilusi performa (*overfitting* dan *backtest fantasy*), memodelkan 
 3. `architecture.md §3.4, §4.1, §7, §9`
 4. `PRD.md §1, §4`
 5. `docs/aeterna/invariant-cheatsheet.md`
+6. `docs/aeterna/ea-development-and-optimization-guide.md`
+7. `ea/Reports/batch_summary.csv`
 
 ## FORBIDDEN CONTEXT
 - Dilarang mengasumsikan eksekusi harga instan sempurna tanpa slippage.
+- Dilarang mengedit file baseline `ea/AeternaEA/` (patuhi ADR-009).
+- Dilarang merekayasa atau memalsukan angka metrik (Net Profit, Win Rate, Max DD, Sharpe Ratio).
 - Dilarang menggunakan hasil backtest sistem lama (112k pips) sebagai pembenaran performa.
 
 ## PROCEDURE
 1. **Context Manifest**: Baca aturan spesifikasi kontrak Exness Standard (slippage free range, Stop Level EA, Gap rule 3 jam pasar buka).
-2. **PyO3 FFI Architecture**: Rancang arsitektur FFI Rust <-> Python yang aman (*safe memory boundary*, zero `.unwrap()` di core loop).
-3. **Execution Modeling**: Rumuskan formula penalti spread dinamis, slippage asimetris, dan validasi Stop Level.
-4. **Validation Harness**: Susun spesifikasi pengujian Monte Carlo 1000 iterasi dengan permutasi acak deret waktu dan rolling walk-forward window.
-5. **Recalibration Gate**: Tentukan kriteria pemicu rekalibrasi backtest (realized slippage > 2x model pada >60% trade).
+2. **Strategy Tester Batch Automation**: Susun konfigurasi `.ini` dan jalankan skrip `ea/Scripts/run_batch_backtest.ps1` untuk batch pengujian headless multi-tahun.
+3. **Payoff Algebra & Compounding Audit**: Hitung ekspektansi $E_R = W \cdot B - (1 - W)$ dan buktikan batas kuantisasi lot `MathFloor` terhadap deposit.
+4. **Execution Modeling**: Rumuskan formula penalti spread dinamis, slippage asimetris, dan validasi Stop Level di Rust PyO3 dan MQL5.
+5. **Validation Harness**: Susun spesifikasi pengujian Monte Carlo 1000 iterasi dengan permutasi acak deret waktu dan rolling walk-forward window.
+6. **Report Extraction & Audit**: Ekstrak metrik kunci dari `report.html`, arsipkan grafik kurva ekuitas PNG, dan catat ke `batch_summary.csv`.
+7. **Recalibration Gate**: Tentukan kriteria pemicu rekalibrasi backtest (realized slippage > 2x model pada >60% trade).
 
 ## OUTPUT CONTRACT
 Wajib menggunakan amplop baku sesuai `docs/aeterna/agent-contract.md §7` dengan rincian formula matematis PnL pip XAUUSD (ukuran kontrak 100 oz), model slippage, dan algoritma Monte Carlo.

@@ -35,7 +35,13 @@
     "aeterna-task": {
       "description": "Generate self-contained OMP task packet in .handoff/tasks/",
       "template": "{file:.opencode/commands/aeterna-task.md}\n\n$ARGUMENTS",
-      "agent": "aeterna-briefer",
+      "agent": "aeterna-lead",
+      "subtask": true
+    },
+    "aeterna-research": {
+      "description": "Source and grade external evidence into a labelled research brief",
+      "template": "{file:.opencode/commands/aeterna-research.md}\n\n$ARGUMENTS",
+      "agent": "aeterna-research",
       "subtask": true
     },
     "aeterna-verify": {

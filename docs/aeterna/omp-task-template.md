@@ -1,6 +1,6 @@
 # OMP Task Packet Template v2 — AETERNA Quant Project (docs/aeterna/omp-task-template.md)
 
-Template resmi paket tugas mandiri (*self-contained task packet*) yang dihasilkan oleh `aeterna-briefer` untuk dikerjakan oleh builder (OMP / `omp.exe`). Seluruh seksi di bawah ini WAJIB terisi lengkap sebelum task berstatus `READY`.
+Template resmi paket tugas mandiri (*self-contained task packet*) yang dihasilkan oleh `aeterna-lead` untuk dikerjakan oleh builder (OMP / `omp.exe`). Seluruh seksi di bawah ini WAJIB terisi lengkap sebelum task berstatus `READY`.
 
 ---
 

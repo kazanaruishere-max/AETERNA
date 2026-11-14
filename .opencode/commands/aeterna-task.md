@@ -10,7 +10,7 @@
 - `$ARGUMENTS`: ID atau nama rancangan modul yang hendak diubah menjadi task packet OMP (contoh: `TASK-M1-01 SQLite Schema`).
 
 ## Procedure
-1. Panggil sub-agent `aeterna-briefer`. Pastikan skill `omp-task-protocol` dan `aeterna-invariants` dimuat aktif.
+1. Lead menyusun task packet sendiri. Pastikan skill `omp-task-protocol` dan `aeterna-invariants` dimuat aktif.
 2. Muat template `docs/aeterna/omp-task-template.md`.
 3. Tentukan file yang di-whitelist pada seksi `Scope` (maksimal 3 file) dan tetapkan batasan `Forbidden Scope`.
 4. Rincikan persyaratan implementasi yang bertestable, RTM task, dan invariants numerik.
