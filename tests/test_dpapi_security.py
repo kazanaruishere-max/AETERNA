@@ -204,7 +204,6 @@ def test_missing_secrets_file_raises_not_found(tmp_path: Path) -> None:
         load_encrypted_secrets(non_existent)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_env_loader_strips_inline_comment_and_quotes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -224,6 +223,7 @@ def test_env_loader_strips_inline_comment_and_quotes(
     assert creds["telegram_bot_token"].get_secret_value() == "123:abc"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires Win32 OS")
 def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
     """Verify scripts/setup_secrets.py runs cleanly and writes encrypted payload."""
     test_out = tmp_path / ".secrets.enc"
