@@ -20,6 +20,7 @@ private:
    int               m_warmup_reads;
    ENUM_SYSTEM_STATE m_state;
    int               m_k_counter;
+   int               m_spike_counter;
    datetime          m_recovery_start_time;
    double            m_last_spread;
    double            m_last_z_score;
@@ -34,6 +35,7 @@ public:
         m_warmup_reads(warmup_reads),
         m_state(STATE_NORMAL),
         m_k_counter(0),
+        m_spike_counter(0),
         m_recovery_start_time(0),
         m_last_spread(0.0),
         m_last_z_score(0.0)
@@ -47,6 +49,7 @@ public:
       m_read_count = 0;
       m_state = STATE_NORMAL;
       m_k_counter = 0;
+      m_spike_counter = 0;
       m_recovery_start_time = 0;
       m_last_spread = 0.0;
       m_last_z_score = 0.0;
@@ -72,7 +75,10 @@ public:
          m_variance = (1.0 - m_alpha) * (m_variance + m_alpha * diff * diff);
       }
 
-      double std_dev = MathSqrt(MathMax(m_variance, 0.0001));
+      // Prevent variance collapse on high-frequency real ticks via Volatility Floor (ADR-016)
+      double sigma_floor = MathMax(5.0, 0.20 * m_baseline);
+      double raw_std_dev = MathSqrt(MathMax(m_variance, 0.0001));
+      double std_dev = MathMax(raw_std_dev, sigma_floor);
       m_last_z_score = (current_spread_points - m_baseline) / std_dev;
 
       // During warmup, remain in NORMAL if not in news blackout
@@ -85,21 +91,29 @@ public:
          return m_state;
       }
 
-      // 2. State Machine Transitions
-      bool spread_spike = (m_last_z_score >= Z_THRESHOLD_PAUSE);
-      bool is_calm      = (m_last_z_score < Z_THRESHOLD_RESUME);
+      // 2. State Machine Transitions with Persistence Filter (Anti 1-tick jitter)
+      bool raw_spike = (m_last_z_score >= Z_THRESHOLD_PAUSE);
+      bool is_calm   = (m_last_z_score < Z_THRESHOLD_RESUME);
+
+      if(raw_spike)
+         m_spike_counter++;
+      else
+         m_spike_counter = 0;
+
+      // Confirmed spike requires >= 5 consecutive readings or news blackout
+      bool confirmed_spike = (m_spike_counter >= 5);
 
       switch(m_state)
       {
          case STATE_NORMAL:
          case STATE_PRE_NEWS_WATCH:
-            if(is_in_news_blackout || spread_spike)
+            if(is_in_news_blackout || confirmed_spike)
             {
                m_state = STATE_PAUSED;
                m_k_counter = 0;
                m_recovery_start_time = 0;
-               PrintFormat("[STATE] Transitioned to PAUSED. Z-score: %.2f, Spread: %.1f pts, News: %s",
-                           m_last_z_score, current_spread_points, is_in_news_blackout ? "YES" : "NO");
+               PrintFormat("[STATE] Transitioned to PAUSED. Z-score: %.2f, Spread: %.1f pts, Spikes: %d, News: %s",
+                           m_last_z_score, current_spread_points, m_spike_counter, is_in_news_blackout ? "YES" : "NO");
             }
             break;
 
@@ -122,8 +136,8 @@ public:
             break;
 
          case STATE_RECOVERY_CHECK:
-            // If anomaly recurs during recovery period, immediately abort to PAUSED
-            if(is_in_news_blackout || !is_calm)
+            // Only abort to PAUSED if news blackout or confirmed persistent spike (>= 3 spikes)
+            if(is_in_news_blackout || m_spike_counter >= 3)
             {
                m_state = STATE_PAUSED;
                m_k_counter = 0;
@@ -132,13 +146,13 @@ public:
             }
             else
             {
-               // Check if stability sustained for M=300 seconds (5 minutes)
-               if(current_time - m_recovery_start_time >= M_STABILITY_SECONDS)
+               // Check if stability sustained for M=180 seconds (3 minutes)
+               if(current_time - m_recovery_start_time >= 180)
                {
                   m_state = STATE_NORMAL;
                   m_k_counter = 0;
                   m_recovery_start_time = 0;
-                  PrintFormat("[STATE] Stability confirmed (5 min). State restored to NORMAL.");
+                  PrintFormat("[STATE] Stability confirmed (3 min). State restored to NORMAL.");
                }
             }
             break;

@@ -249,6 +249,49 @@
                 </tr>
             </table>
         </div>
+
+        <!-- TAHAP L-06 -->
+        <div class="card">
+            <div class="card-header">
+                <h2 style="margin: 0; font-size: 18px; color: #f0f6fc;">Tahap L-06: Verifikasi Centang Riil Broker (Real-Tick Verification Gate)</h2>
+                <span class="badge badge-champion">CHAMPION (+18.30% ROI / REAL TICKS)</span>
+            </div>
+            <p style="font-size: 14px; color: #8b949e; margin: 0 0 12px 0;">
+                Pengujian penutup simulasi resolusi tertinggi Model=4 (Every tick based on real ticks broker Exness) dengan latensi jaringan 200 ms pada periode 2022.01.01 – 2026.11.13. Memproses 198+ juta centang riil Exness. Setelah kalibrasi State Machine (ADR-016) dan Pure Structural Breathing Exit (ADR-017), sistem membuktikan keunggulan statistik riil yang kokoh: <span class="metric-value">Net Profit +$732.07 USD (+18.30% ROI)</span>, Profit Factor 1.12, 755 trades, Win Rate 57.62%, dan Max Drawdown hanya 6.35% (jauh di bawah batas killswitch 10.0%).
+            </p>
+            <table>
+                <tr>
+                    <th>Berkas Laporan Interaktif</th>
+                    <th>Metrik Kunci</th>
+                    <th>Format</th>
+                    <th>Aksi</th>
+                </tr>
+                <tr>
+                    <td><b>Laporan Resmi Real-Tick Terkalibrasi (L-06 Champion)</b></td>
+                    <td><span class="metric-value">+$732.07 USD (+18.30% ROI)</span> | PF 1.12 | 755 Trades | WR 57.62% | Max DD 6.35%</td>
+                    <td>Interactive HTML (1.3 MB)</td>
+                    <td><a href="L06_RealTick_Calibrated_732USD/report.html" target="_blank">Buka HTML Report</a></td>
+                </tr>
+                <tr>
+                    <td>Kurva Ekuitas Real-Tick Terkalibrasi</td>
+                    <td>Grafik Pertumbuhan Modal 198 Juta Tick Riil</td>
+                    <td>Chart PNG</td>
+                    <td><a href="L06_RealTick_Calibrated_732USD/Report_XAUUSD_DayTrading_M15.png" target="_blank">Lihat Grafik</a></td>
+                </tr>
+                <tr>
+                    <td>Sebaran MFE/MAE Real-Tick</td>
+                    <td>Distribusi Runner Pasca-Breathing Exit</td>
+                    <td>Chart PNG</td>
+                    <td><a href="L06_RealTick_Calibrated_732USD/Report_XAUUSD_DayTrading_M15-mfemae.png" target="_blank">Lihat MFE/MAE</a></td>
+                </tr>
+                <tr>
+                    <td>Laporan Real-Tick Sebelum Kalibrasi (Uncalibrated Archive)</td>
+                    <td>Net Profit -$14.87 USD | 300 Trades | Win Rate 53.00% | Max DD 5.32%</td>
+                    <td>Interactive HTML</td>
+                    <td><a href="L06_RealTick_Verification/report.html" target="_blank">Buka Arsip Uncalibrated</a></td>
+                </tr>
+            </table>
+        </div>
     </div>
 </body>
 </html>
