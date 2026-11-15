@@ -32,6 +32,11 @@ input bool                  InpEnforceNewsFilter   = true;                  // E
 input int                   InpSlippageTolerancePts= 50;                    // Slippage Tolerance (Points)
 input ulong                 InpMagicNumber         = MAGIC_AETERNA_DAY;     // EA Magic Identifier
 
+input group "=== STRATEGY PARAMETERS (SWEEP / GENETIC OPTIMIZATION) ==="
+input int                   InpDonchianPeriod      = 24;                    // Donchian Breakout Channel Period (Bars)
+input double                InpAtrMultiplier       = 1.6;                   // ATR Stop Loss Multiplier
+input double                InpRewardRiskRatio     = 2.6;                   // Reward-to-Risk Ratio (R:R >= 2.0)
+
 //--- Engine Components
 CRiskManager        *g_risk;
 CSpreadStateMachine *g_state_machine;
@@ -81,7 +86,7 @@ int OnInit()
    g_calendar        = new CCalendarFilter(InpEnforceNewsFilter);
    g_exit_manager    = new CExitManager(InpMagicNumber, _Symbol, InpSlippageTolerancePts);
    g_regime_detector = new CRegimeDetector(_Symbol);
-   g_breakout        = new CStrategyBreakout(_Symbol, 20);
+   g_breakout        = new CStrategyBreakout(_Symbol, InpDonchianPeriod, InpAtrMultiplier, InpRewardRiskRatio);
    g_momentum        = new CStrategyMomentum(_Symbol, 10, 1.5);
    g_asian_range     = new CStrategyAsianRange(_Symbol, 350.0);
 
@@ -293,4 +298,15 @@ void OnTick()
       PrintFormat("[EXECUTION ERROR] OrderSend Failed: Retcode=%d (%s)",
                   g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
    }
+}
+
+//+------------------------------------------------------------------+
+//| Tester custom optimization criterion function                    |
+//+------------------------------------------------------------------+
+double OnTester()
+{
+   double profit = TesterStatistics(STAT_PROFIT);
+   double max_dd = TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
+   if(max_dd <= 0.0) return 0.0;
+   return (profit / max_dd); // Calmar-like proxy: Net Profit divided by Max Equity DD %
 }

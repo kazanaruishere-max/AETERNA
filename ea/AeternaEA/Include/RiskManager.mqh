@@ -127,7 +127,15 @@ public:
          return 0.0;
 
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-      double risk_pct = thin_liquidity ? (RISK_PER_TRADE_PCT * 0.5) : RISK_PER_TRADE_PCT; // Graduated 50%
+
+      // Multi-Tier Dynamic Drawdown Throttling
+      double drawdown_pct = (m_peak_equity > 0) ? (m_peak_equity - equity) / m_peak_equity : 0.0;
+      double risk_scale = 1.0;
+      if(drawdown_pct >= 0.050)
+         risk_scale = 0.50; // Halve risk to 0.25% during moderate drawdown to protect 10% limit
+
+      double base_risk = thin_liquidity ? (RISK_PER_TRADE_PCT * 0.5) : RISK_PER_TRADE_PCT;
+      double risk_pct = base_risk * risk_scale;
       double risk_amount_usd = equity * risk_pct;
 
       // In MT5 for XAUUSD:
