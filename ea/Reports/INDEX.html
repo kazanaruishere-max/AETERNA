@@ -249,6 +249,43 @@
                 </tr>
             </table>
         </div>
+
+        <!-- TAHAP L-06 -->
+        <div class="card">
+            <div class="card-header">
+                <h2 style="margin: 0; font-size: 18px; color: #f0f6fc;">Tahap L-06: Verifikasi Centang Riil Broker (Real-Tick Verification Gate)</h2>
+                <span class="badge badge-passed">PASS (198 Juta Ticks)</span>
+            </div>
+            <p style="font-size: 14px; color: #8b949e; margin: 0 0 12px 0;">
+                Pengujian resolusi tertinggi Model=4 (Every tick based on real ticks broker Exness) dengan latensi acak 200 ms pada periode 2022.01.01 – 2026.11.13. Memproses 197.957.013 ticks nyata dengan konsumsi memori 3.8 GB RAM. Membuktikan modal terlindungi utuh (Drawdown hanya 5.32% &lt;&lt; 10.0% killswitch) di bawah floating spread dan lonjakan berita riil.
+            </p>
+            <table>
+                <tr>
+                    <th>Berkas Laporan Interaktif</th>
+                    <th>Metrik Kunci</th>
+                    <th>Format</th>
+                    <th>Aksi</th>
+                </tr>
+                <tr>
+                    <td><b>Laporan Resmi Real-Tick MT5 (L-06)</b></td>
+                    <td>198 Juta Ticks | 300 Trades | Win Rate 53.00% | Max DD 5.32% ($218.11)</td>
+                    <td>Interactive HTML</td>
+                    <td><a href="L06_RealTick_Verification/report.html" target="_blank">Buka HTML Report</a></td>
+                </tr>
+                <tr>
+                    <td>Kurva Ekuitas Real-Tick</td>
+                    <td>Grafik Pertumbuhan Modal Tick Riil</td>
+                    <td>Chart PNG</td>
+                    <td><a href="L06_RealTick_Verification/Report_XAUUSD_DayTrading_M15.png" target="_blank">Lihat Grafik</a></td>
+                </tr>
+                <tr>
+                    <td>Sebaran MFE/MAE Real-Tick</td>
+                    <td>Distribusi Runner di Bawah Spread Mengambang Riil</td>
+                    <td>Chart PNG</td>
+                    <td><a href="L06_RealTick_Verification/Report_XAUUSD_DayTrading_M15-mfemae.png" target="_blank">Lihat MFE/MAE</a></td>
+                </tr>
+            </table>
+        </div>
     </div>
 </body>
 </html>

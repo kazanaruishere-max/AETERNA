@@ -1,2 +1,2 @@
 "Scenario","Period","NetProfitUSD","ProfitFactor","ExpectedPayoff","TotalTrades","ProfitTrades","LossTrades","MaxDrawdown"
-"XAUUSD_DayTrading_M15","M15","905.15","1.15","1.17","771","449 (58.24%)","322 (41.76%)","257.85 (5.26%)"
+"XAUUSD_DayTrading_M15","M15","-14.87","0.99","-0.05","300","159 (53.00%)","141 (47.00%)","218.11 (5.32%)"
