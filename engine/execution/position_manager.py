@@ -15,6 +15,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from engine.execution.broker_bridge import (
@@ -95,12 +96,16 @@ class PositionManager:
         cooldown_seconds: float = 2.0,
         slippage_cushion_usd: float = 0.20,
         deadband_usd: float = 0.20,
+        be_trigger_r: float = 1.0,
+        trailing_ratchet_r: float = 2.0,
     ) -> None:
         self.bridge = bridge
         self.stops_level_buffer_pts = stops_level_buffer_pts
         self.cooldown_seconds = cooldown_seconds
         self.slippage_cushion_usd = slippage_cushion_usd
         self.deadband_usd = deadband_usd
+        self.be_trigger_r = float(be_trigger_r)
+        self.trailing_ratchet_r = float(trailing_ratchet_r)
 
     def calculate_break_even_sl(self, pos: PositionState) -> float:
         """Calculate break-even SL using absolute entry spread and slippage cushion."""
@@ -158,12 +163,13 @@ class PositionManager:
         """Evaluate serial pipeline: move SL to BE first, then execute partial close."""
         bid = float(current_tick.bid)
         ask = float(current_tick.ask)
-        one_r_reached = (
-            (bid >= (pos.open_price + pos.initial_r_pts))
+        trigger_dist = pos.initial_r_pts * self.be_trigger_r
+        trigger_reached = (
+            (bid >= (pos.open_price + trigger_dist))
             if pos.direction == "BUY"
-            else (ask <= (pos.open_price - pos.initial_r_pts))
+            else (ask <= (pos.open_price - trigger_dist))
         )
-        if not one_r_reached:
+        if not trigger_reached:
             return pos, None, None
 
         target_sl = self.calculate_break_even_sl(pos)
@@ -246,3 +252,20 @@ class PositionManager:
 
         pos, mod_res = self._evaluate_trailing_stop(pos, current_tick, symbol_info, now)
         return pos, mod_res, None
+
+    @staticmethod
+    def is_time_invalidated(elapsed_bars_m15: int, current_r: float) -> bool:
+        """Lapis 4 Time Invalidation: 16 closed bars on M15 (4 hours) if floating R < 0.3."""
+        return elapsed_bars_m15 >= 16 and current_r < 0.3
+
+    @staticmethod
+    def is_rollover_window(dt_utc: datetime) -> bool:
+        """Lapis 5 Pre-Rollover Force Close: 15 mins before daily break (20:44 UTC summer, 21:44 UTC winter)."""
+        return (dt_utc.hour == 20 and dt_utc.minute >= 44) or (dt_utc.hour == 21 and dt_utc.minute >= 44)
+
+    @staticmethod
+    def is_regime_invalidated(direction: OrderDirection, current_regime: str) -> bool:
+        """Lapis 5 Regime Invalidation: emergency exit if H4 macro trend flips contrary."""
+        if direction == "BUY" and current_regime == "BEARISH_TRENDING":
+            return True
+        return bool(direction == "SELL" and current_regime == "BULLISH_TRENDING")

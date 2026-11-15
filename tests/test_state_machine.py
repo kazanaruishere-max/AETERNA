@@ -67,6 +67,21 @@ def test_spread_filter_anti_div_by_zero_epsilon() -> None:
     assert z_micro == 0.0
 
 
+def test_spread_filter_volatility_floor_adr_016() -> None:
+    """ADR-016: Verify min_std_dev floor prevents variance collapse and false alarm spikes."""
+    sf = SpreadFilter(alpha=0.08, window_size=60, warmup_reads=30, min_std_dev=0.5)
+    for _ in range(60):
+        sf.update(2.0)
+
+    # In zero-floor filter, 0.1 pip jitter on zero variance would explode to Z = 1000
+    # With min_std_dev = 0.5 (sigma_floor = max(0.5, 0.2*2.0) = 0.5):
+    # Z = (2.1 - 2.0) / 0.5 = 0.2 (calm, far below 3.0 pause threshold)
+    _, _std_dev, z_score = sf.update(2.1)
+    assert z_score is not None
+    assert z_score < 0.5
+    assert z_score < 3.0
+
+
 def test_dst_aware_news_utc_conversion() -> None:
     """Verify dynamic Eastern Time to UTC conversion for EDT (summer) and EST (winter)."""
     # Summer (EDT, UTC-4): 08:30 EDT == 12:30:00 UTC
