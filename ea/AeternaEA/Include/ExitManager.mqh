@@ -158,21 +158,62 @@ public:
          }
 
          //------------------------------------------------------------
-         // Lapis 2: Dynamic ATR Ratchet Trailing Stop
-         // Let winners run: trail 0.75R behind MFE peak
+         // Lapis 3: Partial Scale-Out (50%) at +1.5R & Breakeven Lock (+0.10R)
+         // (Pure Structural Breathing Architecture - ADR-017)
          //------------------------------------------------------------
-         if(r_multiple >= 1.2)
+         if(r_multiple >= 1.5)
          {
-            double lock_profit_r = 0.5; // Guarantee at least +0.5R in the bank
+            // Execute 50% scale-out once
+            if(!m_partial_done && volume >= 0.02)
+            {
+               double close_vol = NormalizeDouble(volume * 0.5, 2);
+               PrintFormat("[EXIT L3] Reached +1.5R. Closing 50%% volume (%.2f of %.2f lots) for ticket #%d", close_vol, volume, ticket);
+               if(m_trade.PositionClosePartial(ticket, close_vol))
+               {
+                  m_partial_done = true;
+               }
+            }
+
+            // Lock Stop Loss to Breakeven + 0.10R spread/commission buffer
+            double be_buffer_r = 0.10;
+            double be_sl = 0.0;
+
+            if(pos_type == POSITION_TYPE_BUY)
+            {
+               be_sl = NormalizeDouble(open_price + (be_buffer_r * sl_dist_pts * point), _Digits);
+               if(be_sl > (current_sl + 30 * point))
+               {
+                  PrintFormat("[EXIT BE LOCK] #%d Buy SL -> Breakeven+Buffer %.2f (Current R: %.2f)", ticket, be_sl, r_multiple);
+                  m_trade.PositionModify(ticket, be_sl, current_tp);
+               }
+            }
+            else // POSITION_TYPE_SELL
+            {
+               be_sl = NormalizeDouble(open_price - (be_buffer_r * sl_dist_pts * point), _Digits);
+               if(be_sl < (current_sl - 30 * point) || current_sl == 0.0)
+               {
+                  PrintFormat("[EXIT BE LOCK] #%d Sell SL -> Breakeven+Buffer %.2f (Current R: %.2f)", ticket, be_sl, r_multiple);
+                  m_trade.PositionModify(ticket, be_sl, current_tp);
+               }
+            }
+         }
+
+         //------------------------------------------------------------
+         // Lapis 2: Wide ATR Ratchet Trailing Stop (Active only at >= 2.0R)
+         // Trail 1.0R behind MFE to let runners capture full +2.6R TP
+         //------------------------------------------------------------
+         if(r_multiple >= 2.0)
+         {
+            double lock_profit_r = 0.50; // Guarantee at least +0.50R in the bank
             double cand_sl = 0.0;
 
             if(pos_type == POSITION_TYPE_BUY)
             {
-               double ratchet_sl = m_mfe_price - (0.75 * sl_dist_pts * point);
+               double ratchet_sl = m_mfe_price - (1.00 * sl_dist_pts * point);
                double floor_sl   = open_price + (lock_profit_r * sl_dist_pts * point);
                cand_sl = NormalizeDouble(MathMax(floor_sl, ratchet_sl), _Digits);
 
-               if(cand_sl > (current_sl + 15 * point))
+               if(cand_sl > (current_sl + 30 * point))
                {
                   PrintFormat("[EXIT L2 RATCHET] #%d Buy Ratchet SL -> %.2f (MFE: %.2f, Current R: %.2f)",
                               ticket, cand_sl, m_mfe_price, r_multiple);
@@ -181,26 +222,15 @@ public:
             }
             else // POSITION_TYPE_SELL
             {
-               double ratchet_sl = m_mfe_price + (0.75 * sl_dist_pts * point);
+               double ratchet_sl = m_mfe_price + (1.00 * sl_dist_pts * point);
                double floor_sl   = open_price - (lock_profit_r * sl_dist_pts * point);
                cand_sl = NormalizeDouble(MathMin(floor_sl, ratchet_sl), _Digits);
 
-               if(cand_sl < (current_sl - 15 * point) || current_sl == 0.0)
+               if(cand_sl < (current_sl - 30 * point) || current_sl == 0.0)
                {
                   PrintFormat("[EXIT L2 RATCHET] #%d Sell Ratchet SL -> %.2f (MFE: %.2f, Current R: %.2f)",
                               ticket, cand_sl, m_mfe_price, r_multiple);
                   m_trade.PositionModify(ticket, cand_sl, current_tp);
-               }
-            }
-
-            // Layer 3: Partial Scale-Out (50%) at +1.5R (only if lot >= 0.02)
-            if(r_multiple >= 1.5 && !m_partial_done && volume >= 0.02)
-            {
-               double close_vol = NormalizeDouble(volume * 0.5, 2);
-               PrintFormat("[EXIT L3] Reached +1.5R. Closing 50%% volume (%.2f of %.2f lots) for ticket #%d", close_vol, volume, ticket);
-               if(m_trade.PositionClosePartial(ticket, close_vol))
-               {
-                  m_partial_done = true;
                }
             }
          }

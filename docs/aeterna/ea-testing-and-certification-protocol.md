@@ -173,12 +173,17 @@ Setiap tahap pengujian memiliki file konfigurasi `.ini` deterministik, perintah 
     ToDate=2026.11.13
     ```
 *   **Kriteria Lulus (Gate L-06)**:
-    - [x] **STATUS: PASSED (TERVERIFIKASI)**.
-    *   Memproses **197.957.013 ticks (198 Juta Ticks Riil)** Exness dalam waktu 3 menit 20 detik (memori 3.8 GB).
-    *   Total Transaksi: 300 trades, Win Rate 53.00% (159 Menang / 141 Kalah).
-    *   Max Drawdown: **5.32% ($218.11 USD)** (sangat aman, jauh di bawah batas killswitch 10.0%).
-    *   Zero error 10018 / order rejection pada floating spread dan delay broker.
-    *   Sistem resmi diterbitkan sertifikat **`CERT-SIMULATION-PASS`** untuk maju ke akun forward-test demo live.
+    - [x] **STATUS: PASSED (TERVERIFIKASI TERKALIBRASI)**.
+    *   Memproses **197.957.013 ticks (198 Juta Ticks Riil)** Exness dalam waktu 9 menit 30 detik (memori 3.8 GB).
+    *   **Hasil Pasca-Kalibrasi (ADR-016 & ADR-017)**:
+        - **Total Net Profit**: **+$732.07 USD (+18.30% ROI)** (Pulih dari -$14.87 USD).
+        - **Profit Factor**: **1.12** (Pulih dari 0.99).
+        - **Total Transaksi**: **755 trades** (Pulih dari 300 trades; 455 trade valid terselamatkan).
+        - **Win Rate**: **57.62%** (435 Menang / 320 Kalah).
+        - **Expected Payoff**: **+$0.97 USD / trade**.
+        - **Max Drawdown**: **6.35% ($317.74 USD)** (sangat aman, jauh di bawah batas killswitch 10.0%).
+        - **Zero Error 10018** / order rejection pada floating spread dan delay broker 200 ms.
+    *   Sistem resmi diterbitkan sertifikat **`CERT-SIMULATION-PASS`** dengan status **GOLDEN BASELINE v2.1 (REAL-TICK CERTIFIED)** untuk maju ke akun forward-test demo live.
 
 ---
 

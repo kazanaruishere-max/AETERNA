@@ -1,0 +1,6 @@
+; AeternaEA Session Momentum M5 Preset
+InpProfile=1
+InpDryRun=false
+InpEnforceNewsFilter=true
+InpSlippageTolerancePts=50
+InpMagicNumber=20261102
