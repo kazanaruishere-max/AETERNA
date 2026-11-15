@@ -8,6 +8,10 @@ param (
     [string]$ToDate = "2024.11.01",
     [double]$Deposit = 1000.0,
     [int]$Model = 1, # 1: 1-minute OHLC, 0: Every tick, 4: Real ticks
+    [int]$ExecutionMode = 0, # 0: Normal (zero latency), 32: Random Delay 100-300ms (Latency Stress)
+    [int]$DonchianPeriod = 24,
+    [double]$AtrMultiplier = 1.6,
+    [double]$RewardRiskRatio = 2.6,
     [int]$TimeoutSeconds = 600
 )
 
@@ -50,10 +54,11 @@ if (-not $login -or -not $server) {
     exit 1
 }
 
+$symbolClean = ($Symbol -replace "m$", "")
 $runs = @()
 if ($Profile -eq "DayTrading" -or $Profile -eq "All") {
     $runs += @{
-        Name = "XAUUSD_DayTrading_M15"
+        Name = "${symbolClean}_DayTrading_M15"
         ProfileEnum = 0
         Period = "M15"
         Magic = 20261101
@@ -61,7 +66,7 @@ if ($Profile -eq "DayTrading" -or $Profile -eq "All") {
 }
 if ($Profile -eq "SessionMomentum" -or $Profile -eq "All") {
     $runs += @{
-        Name = "XAUUSD_SessionMomentum_M5"
+        Name = "${symbolClean}_SessionMomentum_M5"
         ProfileEnum = 1
         Period = "M5"
         Magic = 20261102
@@ -69,7 +74,7 @@ if ($Profile -eq "SessionMomentum" -or $Profile -eq "All") {
 }
 if ($Profile -eq "AsianRange" -or $Profile -eq "All") {
     $runs += @{
-        Name = "XAUUSD_AsianRange_M5"
+        Name = "${symbolClean}_AsianRange_M5"
         ProfileEnum = 2
         Period = "M5"
         Magic = 20261103
@@ -77,7 +82,7 @@ if ($Profile -eq "AsianRange" -or $Profile -eq "All") {
 }
 if ($Profile -eq "MultiSessionHybrid" -or $Profile -eq "All") {
     $runs += @{
-        Name = "XAUUSD_MultiSessionHybrid_M15"
+        Name = "${symbolClean}_MultiSessionHybrid_M15"
         ProfileEnum = 3
         Period = "M15"
         Magic = 20261100
@@ -90,7 +95,7 @@ Write-Host "====================================================================
 Write-Host "Symbol         : $Symbol" -ForegroundColor Yellow
 Write-Host "Period Range   : $FromDate -> $ToDate" -ForegroundColor Yellow
 Write-Host "Deposit        : $Deposit USD | Leverage: 1:2000" -ForegroundColor Yellow
-Write-Host "Execution Mode : Model=$Model (1=M1 OHLC, 0=Every Tick, 4=Real Ticks)" -ForegroundColor Yellow
+Write-Host "Execution Mode : Model=$Model (1=M1 OHLC, 0=Every Tick, 4=Real Ticks) | DelayMode=$ExecutionMode" -ForegroundColor Yellow
 Write-Host "Total Scenarios: $($runs.Count)" -ForegroundColor Yellow
 Write-Host ""
 
@@ -123,7 +128,7 @@ Deposit=$Deposit
 Currency=USD
 Leverage=2000
 Model=$Model
-ExecutionMode=0
+ExecutionMode=$ExecutionMode
 Optimization=0
 FromDate=$FromDate
 ToDate=$ToDate
@@ -139,6 +144,9 @@ InpDryRun=false
 InpEnforceNewsFilter=true
 InpSlippageTolerancePts=50
 InpMagicNumber=$magic
+InpDonchianPeriod=$DonchianPeriod
+InpAtrMultiplier=$AtrMultiplier
+InpRewardRiskRatio=$RewardRiskRatio
 "@
 
     Set-Content -Path $iniPath -Value $iniContent -Encoding UTF8

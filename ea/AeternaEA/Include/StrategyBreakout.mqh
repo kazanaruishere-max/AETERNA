@@ -18,11 +18,15 @@ private:
    int               m_ema20_handle;
    int               m_ema50_handle;
    int               m_rsi_handle;
+   double            m_atr_multiplier;
+   double            m_rr_ratio;
 
 public:
-   CStrategyBreakout(string symbol, int donchian_period = 20)
+   CStrategyBreakout(string symbol, int donchian_period = 20, double atr_multiplier = 1.5, double rr_ratio = 2.5)
       : m_symbol(symbol),
         m_donchian_period(donchian_period),
+        m_atr_multiplier(atr_multiplier),
+        m_rr_ratio(rr_ratio),
         m_atr_handle(INVALID_HANDLE),
         m_ema20_handle(INVALID_HANDLE),
         m_ema50_handle(INVALID_HANDLE),
@@ -89,10 +93,11 @@ public:
          return DIR_NONE;
       }
 
-      // 3. Fetch price data for previous closed M15 bars
+      // 3. Fetch price data for previous closed M15 bars (at least 22 bars for 20-bar volume average)
+      int bars_needed = MathMax(m_donchian_period + 2, 22);
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
-      if(CopyRates(m_symbol, PERIOD_M15, 1, m_donchian_period + 2, rates) < (m_donchian_period + 2))
+      if(CopyRates(m_symbol, PERIOD_M15, 1, bars_needed, rates) < bars_needed)
       {
          reason = "INSUFFICIENT_M15_RATES";
          return DIR_NONE;
@@ -115,12 +120,16 @@ public:
       double rsi   = rsi_buf[0];
       double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
 
-      // Distance calculation: SL = 1.5 * ATR(14), floored at $2.50
-      double calculated_sl_distance = current_atr * ATR_SL_MULTIPLIER;
-      double min_sl_distance = MIN_SL_DISTANCE_DOLLARS;
+      // Symbol-adaptive minimum distance: $2.50 for XAUUSD, 150 points for Forex
+      bool is_gold = (StringFind(m_symbol, "XAU") >= 0 || StringFind(m_symbol, "GOLD") >= 0);
+      double min_sl_distance = is_gold ? MIN_SL_DISTANCE_DOLLARS : (150.0 * point);
+      double fallback_cap    = is_gold ? 3.50 : (250.0 * point);
+
+      // Distance calculation: SL = m_atr_multiplier * ATR(14), floored at min_sl_distance
+      double calculated_sl_distance = current_atr * m_atr_multiplier;
       double final_sl_distance = MathMax(calculated_sl_distance, min_sl_distance);
       double final_sl_pts = final_sl_distance / point;
-      double final_tp_pts = final_sl_pts * 2.5; // Asymmetric 2.5:1 reward
+      double final_tp_pts = final_sl_pts * m_rr_ratio; // Configurable R:R reward (default 2.5:1)
 
       // 5. Calculate Donchian Channel on bars 2 to 21
       double donchian_high = -1.0;
@@ -164,9 +173,10 @@ public:
             if(pullback_buy)
             {
                double swing_dist = (bar1_close - bar2_low) + (0.2 * current_atr);
-               double p_sl = MathMin(MathMax(swing_dist, MIN_SL_DISTANCE_DOLLARS), 3.50);
+               double max_pullback_sl = MathMax(current_atr * m_atr_multiplier, fallback_cap);
+               double p_sl = MathMin(MathMax(swing_dist, min_sl_distance), max_pullback_sl);
                sl_points = p_sl / point;
-               tp_points = sl_points * 2.5;
+               tp_points = sl_points * m_rr_ratio;
             }
             else
             {
@@ -192,9 +202,10 @@ public:
             if(pullback_sell)
             {
                double swing_dist = (bar2_high - bar1_close) + (0.2 * current_atr);
-               double p_sl = MathMin(MathMax(swing_dist, MIN_SL_DISTANCE_DOLLARS), 3.50);
+               double max_pullback_sl = MathMax(current_atr * m_atr_multiplier, fallback_cap);
+               double p_sl = MathMin(MathMax(swing_dist, min_sl_distance), max_pullback_sl);
                sl_points = p_sl / point;
-               tp_points = sl_points * 2.5;
+               tp_points = sl_points * m_rr_ratio;
             }
             else
             {
