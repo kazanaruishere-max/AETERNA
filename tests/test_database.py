@@ -10,12 +10,16 @@ Verifies:
    candles at the exact same timestamp without collision or overwrite.
 """
 
+import dataclasses
 from pathlib import Path
 import sqlite3
 import pytest
 
 from engine.models import (
+    BarCursorRecord,
     CandleRecord,
+    NewsTelemetryRecord,
+    SignalObservationRecord,
     SystemStateRecord,
     TradeRecord,
 )
@@ -36,16 +40,19 @@ def db(tmp_path: Path) -> DatabaseManager:
 
 
 def test_ddl_execution_and_tables_created(db: DatabaseManager) -> None:
-    """Verify all 5 tables are created cleanly."""
+    """Verify all 8 tables are created cleanly."""
     with db.get_connection() as conn:
         cursor = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
         )
         tables = [row["name"] for row in cursor.fetchall()]
         expected_tables = [
+            "bar_cursors",
             "blocked_signals",
             "market_candles",
             "model_registry",
+            "news_telemetry",
+            "signal_observations",
             "system_state",
             "trades",
         ]
@@ -54,11 +61,22 @@ def test_ddl_execution_and_tables_created(db: DatabaseManager) -> None:
 
 
 def test_canonical_schema_file_on_disk() -> None:
-    """Verify db/schema.sql exists on disk and contains all 5 canonical table definitions."""
+    """Verify db/schema.sql contains all 8 canonical table definitions."""
     assert CANONICAL_SCHEMA_PATH.exists(), f"Missing file: {CANONICAL_SCHEMA_PATH}"
     ddl = load_canonical_ddl()
-    for tbl in ["model_registry", "trades", "blocked_signals", "market_candles", "system_state"]:
-        assert f"CREATE TABLE IF NOT EXISTS {tbl}" in ddl, f"Table {tbl} missing in db/schema.sql"
+    for tbl in [
+        "model_registry",
+        "trades",
+        "blocked_signals",
+        "market_candles",
+        "system_state",
+        "bar_cursors",
+        "signal_observations",
+        "news_telemetry",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {tbl}" in ddl, (
+            f"Table {tbl} missing in db/schema.sql"
+        )
 
 
 def test_baseline_model_auto_seeded(db: DatabaseManager) -> None:
@@ -335,3 +353,189 @@ def test_system_state_singleton_and_update(db: DatabaseManager) -> None:
                 ) VALUES (2, 'NORMAL', 1.5, 1.5, 0.0, 0, 1000.0, 0.0, 0, '2026-10-30T00:00:00Z')
                 """
             )
+
+
+def test_bar_cursor_lifecycle_and_idempotency(db: DatabaseManager) -> None:
+    """Verify cursor insert, advance, PK (symbol, timeframe) integrity, and restart persistence."""
+    symbol = "XAUUSD"
+    assert db.get_bar_cursor(symbol, "M15") is None
+
+    initial = BarCursorRecord(
+        symbol=symbol,
+        timeframe="M15",
+        last_closed_bar_ts=1_700_000_000,
+        updated_at_ms=1_700_000_000_000,
+    )
+    db.advance_bar_cursor(initial)
+    assert db.get_bar_cursor(symbol, "M15") == initial
+
+    advanced = BarCursorRecord(
+        symbol=symbol,
+        timeframe="M15",
+        last_closed_bar_ts=1_700_000_900,
+        updated_at_ms=1_700_001_000_000,
+    )
+    db.advance_bar_cursor(advanced)
+    assert db.get_bar_cursor(symbol, "M15") == advanced
+
+    # PK (symbol, timeframe): re-advancing the same key replaces, never duplicates.
+    db.advance_bar_cursor(advanced)
+    with db.get_connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS total FROM bar_cursors;").fetchone()
+    assert row is not None
+    assert row["total"] == 1
+
+    # Restart mid-bar: a fresh manager reads the persisted cursor.
+    restarted = DatabaseManager(db.db_path)
+    restarted.init_db()
+    assert restarted.get_bar_cursor(symbol, "M15") == advanced
+
+
+def test_signal_observation_unique_constraint_rejects_duplicates(
+    db: DatabaseManager,
+) -> None:
+    """Verify duplicate (symbol, bar_ts, strategy_id) returns False without a second row."""
+    signal = SignalObservationRecord(
+        signal_id="SIG-M15-0001",
+        symbol="XAUUSD",
+        bar_ts=1_745_000_000,
+        strategy_id="volatility_breakout_m15",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2750.00,
+        sl_px=2730.00,
+        tp_px=2775.00,
+        lot_virtual=0.02,
+    )
+    assert db.insert_signal_observation(signal) is True
+
+    duplicate = dataclasses.replace(signal, signal_id="SIG-M15-0002")
+    assert db.insert_signal_observation(duplicate) is False
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total FROM signal_observations;"
+        ).fetchone()
+    assert row is not None
+    assert row["total"] == 1
+
+
+def test_signal_observation_update_lifecycle(db: DatabaseManager) -> None:
+    """Verify PENDING_VIRTUAL -> OPEN_VIRTUAL -> CLOSED_PROFIT with realized R update."""
+    signal = SignalObservationRecord(
+        signal_id="SIG-LIFECYCLE-001",
+        symbol="XAUUSD",
+        bar_ts=1_745_000_900,
+        strategy_id="volatility_breakout_m15",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2750.00,
+        sl_px=2730.00,
+        tp_px=2775.00,
+        lot_virtual=0.02,
+    )
+    assert db.insert_signal_observation(signal) is True
+    assert db.update_signal_observation(signal.signal_id, state="OPEN_VIRTUAL") is True
+    assert (
+        db.update_signal_observation(
+            signal.signal_id,
+            state="CLOSED_PROFIT",
+            r_realized_net=1.25,
+            exit_reason="tp_hit",
+        )
+        is True
+    )
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT state, r_realized_net, exit_reason
+            FROM signal_observations
+            WHERE signal_id = ?
+            """,
+            (signal.signal_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "CLOSED_PROFIT"
+    assert row["r_realized_net"] == 1.25
+    assert row["exit_reason"] == "tp_hit"
+
+    assert (
+        db.update_signal_observation("SIG-NONEXISTENT", state="OPEN_VIRTUAL") is False
+    )
+
+
+def test_news_telemetry_persistence_roundtrip(db: DatabaseManager) -> None:
+    """Verify news telemetry persistence and read-back roundtrip."""
+    telemetry = NewsTelemetryRecord(
+        event_id="FRED-CPI-2026-10-30",
+        symbol="XAUUSD",
+        release_ts=1_745_956_000,
+        actual_val=0.12,
+        consensus_val=0.05,
+        peak_spread_pts=2.50,
+        max_z_score=3.40,
+        range_1m=0.80,
+        range_5m=1.50,
+        range_15m=2.20,
+        range_60m=3.00,
+    )
+    db.insert_news_telemetry(telemetry)
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT event_id, symbol, release_ts, actual_val, consensus_val,
+                   peak_spread_pts, max_z_score, range_1m, range_5m,
+                   range_15m, range_60m
+            FROM news_telemetry
+            WHERE event_id = ? AND symbol = ? AND release_ts = ?
+            """,
+            (telemetry.event_id, telemetry.symbol, telemetry.release_ts),
+        ).fetchone()
+    assert row is not None
+    assert row["event_id"] == telemetry.event_id
+    assert row["actual_val"] == telemetry.actual_val
+    assert row["consensus_val"] == telemetry.consensus_val
+    assert row["peak_spread_pts"] == telemetry.peak_spread_pts
+    assert row["max_z_score"] == telemetry.max_z_score
+    assert row["range_1m"] == telemetry.range_1m
+    assert row["range_5m"] == telemetry.range_5m
+    assert row["range_15m"] == telemetry.range_15m
+    assert row["range_60m"] == telemetry.range_60m
+
+
+def test_new_domain_models_are_frozen_immutable() -> None:
+    """Verify new domain dataclasses are frozen (attribute assignment raises)."""
+    cursor_record = BarCursorRecord(
+        symbol="XAUUSD",
+        timeframe="M15",
+        last_closed_bar_ts=1,
+        updated_at_ms=1,
+    )
+    signal_record = SignalObservationRecord(
+        signal_id="SIG-FROZEN-001",
+        symbol="XAUUSD",
+        bar_ts=1,
+        strategy_id="strategy",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2700.00,
+        sl_px=2690.00,
+        tp_px=2720.00,
+        lot_virtual=0.01,
+    )
+    news_record = NewsTelemetryRecord(
+        event_id="EVT-FROZEN-001",
+        symbol="XAUUSD",
+        release_ts=1,
+        peak_spread_pts=1.0,
+        max_z_score=1.0,
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(cursor_record, "last_closed_bar_ts", 2)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(signal_record, "state", "OPEN_VIRTUAL")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(news_record, "max_z_score", 2.0)
