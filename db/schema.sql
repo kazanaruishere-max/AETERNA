@@ -114,3 +114,52 @@ CREATE TABLE IF NOT EXISTS system_state (
     last_news_event TEXT,
     last_updated_utc TEXT NOT NULL
 );
+
+-- --------------------------------------------------------------------
+-- 6. Bar Cursors (Tracking Penutupan Bar & Anti-Duplikasi Evaluasi)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bar_cursors (
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    last_closed_bar_ts INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (symbol, timeframe)
+) STRICT;
+
+-- --------------------------------------------------------------------
+-- 7. Signal Observations (Virtual Position & Forward-Test Tracker)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS signal_observations (
+    signal_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    bar_ts INTEGER NOT NULL,
+    strategy_id TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    state TEXT NOT NULL,
+    entry_px REAL NOT NULL,
+    sl_px REAL NOT NULL,
+    tp_px REAL NOT NULL,
+    lot_virtual REAL NOT NULL,
+    partial_skipped_min_lot INTEGER DEFAULT 0,
+    r_realized_net REAL DEFAULT 0.0,
+    exit_reason TEXT,
+    UNIQUE (symbol, bar_ts, strategy_id)
+) STRICT;
+
+-- --------------------------------------------------------------------
+-- 8. News Telemetry (Audit Mikrostruktur Dampak Berita)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS news_telemetry (
+    event_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    release_ts INTEGER NOT NULL,
+    actual_val REAL,
+    consensus_val REAL,
+    peak_spread_pts REAL NOT NULL,
+    max_z_score REAL NOT NULL,
+    range_1m REAL,
+    range_5m REAL,
+    range_15m REAL,
+    range_60m REAL,
+    PRIMARY KEY (event_id, symbol, release_ts)
+) STRICT;

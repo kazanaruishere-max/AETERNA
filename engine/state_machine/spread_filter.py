@@ -21,6 +21,7 @@ class SpreadFilter:
         alpha: float = 0.08,
         window_size: int = 60,
         warmup_reads: int = 30,
+        min_std_dev: float = 0.0,
     ) -> None:
         if not (0.0 < alpha < 1.0):
             raise ValueError(f"alpha must be between 0 and 1, got {alpha}")
@@ -28,10 +29,13 @@ class SpreadFilter:
             raise ValueError(f"window_size must be positive, got {window_size}")
         if warmup_reads <= 0:
             raise ValueError(f"warmup_reads must be positive, got {warmup_reads}")
+        if min_std_dev < 0.0:
+            raise ValueError(f"min_std_dev cannot be negative, got {min_std_dev}")
 
         self.alpha = float(alpha)
         self.window_size = int(window_size)
         self.warmup_reads = int(warmup_reads)
+        self.min_std_dev = float(min_std_dev)
 
         self._window: deque[float] = deque(maxlen=self.window_size)
         self._baseline: float | None = None
@@ -95,12 +99,13 @@ class SpreadFilter:
             self._z_score = None
             return (self._baseline, self._std_dev, None)
 
-        # 4. Anti Div-by-Zero Epsilon & delta check
+        # 4. Anti Div-by-Zero Epsilon, Volatility Floor (ADR-016), & delta check
         diff = spread - self._baseline
         if abs(diff) < 1e-6:
             self._z_score = 0.0
         else:
-            denom = max(self._std_dev, 1e-4)
+            sigma_floor = max(self.min_std_dev, 0.20 * self._baseline if (self.min_std_dev > 0 and self._baseline) else 0.0)
+            denom = max(self._std_dev, sigma_floor, 1e-4)
             self._z_score = diff / denom
 
         return (self._baseline, self._std_dev, self._z_score)

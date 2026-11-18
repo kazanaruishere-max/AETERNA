@@ -126,3 +126,49 @@ class SystemStateRecord:
     last_updated_utc: str
     last_news_event: str | None = None
     id: int = 1
+
+
+@dataclass(frozen=True)
+class BarCursorRecord:
+    """Tracks the last closed bar timestamp per symbol/timeframe for resume safety."""
+
+    symbol: str
+    timeframe: Timeframe
+    last_closed_bar_ts: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True)
+class SignalObservationRecord:
+    """Virtual position and forward-test tracker for a single trading signal."""
+
+    signal_id: str
+    symbol: str
+    bar_ts: int
+    strategy_id: str
+    order_type: str
+    state: str
+    entry_px: float
+    sl_px: float
+    tp_px: float
+    lot_virtual: float
+    partial_skipped_min_lot: int = 0
+    r_realized_net: float = 0.0
+    exit_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class NewsTelemetryRecord:
+    """Audit telemetry for news deviation impact on spread."""
+
+    event_id: str
+    symbol: str
+    release_ts: int
+    peak_spread_pts: float
+    max_z_score: float
+    actual_val: float | None = None
+    consensus_val: float | None = None
+    range_1m: float | None = None
+    range_5m: float | None = None
+    range_15m: float | None = None
+    range_60m: float | None = None

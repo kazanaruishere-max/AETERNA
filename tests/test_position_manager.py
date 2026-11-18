@@ -309,3 +309,59 @@ def test_broker_bridge_close_partial_position_and_reanchor() -> None:
     mock_mt5.positions_get.return_value = []
     res_nomatch = bridge.close_partial_position(10001, 9999, "XAUUSD", "BUY", 0.02)
     assert res_nomatch.success and res_nomatch.new_ticket == 10001
+
+
+def test_be_trigger_r_configurable() -> None:
+    """ADR-017: Verify configurable be_trigger_r (e.g. 1.5R) suppresses premature trigger at 1.0R."""
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    # When be_trigger_r = 1.5, pos open=2750, r=10 -> target = 2765.0
+    pm_15 = PositionManager(bridge=mock_bridge, be_trigger_r=1.5)
+    pos = _create_sample_buy_pos(current_lot=0.04)
+
+    # At bid=2760.5 (1.05R): should NOT trigger BE modify
+    new_pos, mod_res, close_res = pm_15.evaluate_trailing_and_scaleout(
+        pos, DEFAULT_TICK, DEFAULT_INFO, now_mono=10.0
+    )
+    assert not new_pos.be_sl_modified
+    assert mod_res is None
+    assert close_res is None
+    mock_bridge.modify_position_sltp.assert_not_called()
+
+    # At bid=2765.5 (1.55R): should trigger BE modify
+    tick_15r = DummyTick(bid=2765.5, ask=2765.8)
+    mock_bridge.modify_position_sltp.return_value = ModifyResult(
+        success=True, ticket=10001, new_sl=2750.55, new_tp=2770.0
+    )
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        True, 10001, 10002, 0.02, 0.02, 2765.5
+    )
+    new_pos2, mod_res2, _close_res2 = pm_15.evaluate_trailing_and_scaleout(
+        pos, tick_15r, DEFAULT_INFO, now_mono=10.0
+    )
+    assert new_pos2.be_sl_modified
+    assert mod_res2 and mod_res2.success
+
+
+def test_lapis_4_and_5_invalidation_rules() -> None:
+    """Verify static helper methods for Lapis 4 (time) and Lapis 5 (rollover & regime)."""
+    # Lapis 4: Time invalidation requires >= 16 bars and floating R < 0.3
+    assert not PositionManager.is_time_invalidated(15, 0.1)
+    assert not PositionManager.is_time_invalidated(16, 0.5)
+    assert PositionManager.is_time_invalidated(16, 0.2)
+    assert PositionManager.is_time_invalidated(20, -0.5)
+
+    # Lapis 5: Rollover window (20:44+ UTC and 21:44+ UTC)
+    from datetime import UTC, datetime
+    dt_normal = datetime(2024, 7, 15, 14, 0, tzinfo=UTC)
+    dt_summer_rollover = datetime(2024, 7, 15, 20, 45, tzinfo=UTC)
+    dt_winter_rollover = datetime(2024, 1, 15, 21, 50, tzinfo=UTC)
+    assert not PositionManager.is_rollover_window(dt_normal)
+    assert PositionManager.is_rollover_window(dt_summer_rollover)
+    assert PositionManager.is_rollover_window(dt_winter_rollover)
+
+    # Lapis 5: Regime invalidation
+    assert PositionManager.is_regime_invalidated("BUY", "BEARISH_TRENDING")
+    assert not PositionManager.is_regime_invalidated("BUY", "BULLISH_TRENDING")
+    assert PositionManager.is_regime_invalidated("SELL", "BULLISH_TRENDING")
+    assert not PositionManager.is_regime_invalidated("SELL", "BEARISH_TRENDING")
+

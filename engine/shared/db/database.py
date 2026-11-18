@@ -17,10 +17,13 @@ from pathlib import Path
 from typing import Generator, Sequence
 
 from engine.models import (
+    BarCursorRecord,
     BlockedSignalRecord,
     CandleRecord,
     CandleSource,
     ModelRegistryRecord,
+    NewsTelemetryRecord,
+    SignalObservationRecord,
     SystemStateRecord,
     Timeframe,
     TradeRecord,
@@ -300,4 +303,127 @@ class DatabaseManager:
                 trades_today_count=row["trades_today_count"],
                 last_news_event=row["last_news_event"],
                 last_updated_utc=row["last_updated_utc"],
+            )
+
+    def get_bar_cursor(self, symbol: str, timeframe: str) -> BarCursorRecord | None:
+        """Retrieve the last closed bar cursor for a symbol/timeframe."""
+        query = """
+        SELECT symbol, timeframe, last_closed_bar_ts, updated_at_ms
+        FROM bar_cursors
+        WHERE symbol = ? AND timeframe = ?
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, (symbol, timeframe))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return BarCursorRecord(
+                symbol=row["symbol"],
+                timeframe=row["timeframe"],
+                last_closed_bar_ts=row["last_closed_bar_ts"],
+                updated_at_ms=row["updated_at_ms"],
+            )
+
+    def advance_bar_cursor(self, cursor: BarCursorRecord) -> None:
+        """Upsert bar cursor via INSERT OR REPLACE (restart-safe)."""
+        query = """
+        INSERT OR REPLACE INTO bar_cursors (
+            symbol, timeframe, last_closed_bar_ts, updated_at_ms
+        ) VALUES (?, ?, ?, ?)
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                query,
+                (
+                    cursor.symbol,
+                    cursor.timeframe,
+                    cursor.last_closed_bar_ts,
+                    cursor.updated_at_ms,
+                ),
+            )
+
+    def insert_signal_observation(self, signal: SignalObservationRecord) -> bool:
+        """Insert signal observation; returns False on duplicate (symbol, bar_ts, strategy_id)."""
+        query = """
+        INSERT INTO signal_observations (
+            signal_id, symbol, bar_ts, strategy_id, order_type, state,
+            entry_px, sl_px, tp_px, lot_virtual,
+            partial_skipped_min_lot, r_realized_net, exit_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    query,
+                    (
+                        signal.signal_id,
+                        signal.symbol,
+                        signal.bar_ts,
+                        signal.strategy_id,
+                        signal.order_type,
+                        signal.state,
+                        signal.entry_px,
+                        signal.sl_px,
+                        signal.tp_px,
+                        signal.lot_virtual,
+                        signal.partial_skipped_min_lot,
+                        signal.r_realized_net,
+                        signal.exit_reason,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def update_signal_observation(
+        self,
+        signal_id: str,
+        state: str,
+        r_realized_net: float = 0.0,
+        exit_reason: str | None = None,
+    ) -> bool:
+        """Update virtual signal state and realized R; returns True if a row changed."""
+        query = """
+        UPDATE signal_observations
+        SET state = ?, r_realized_net = ?, exit_reason = ?
+        WHERE signal_id = ?
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                query,
+                (
+                    state,
+                    r_realized_net,
+                    exit_reason,
+                    signal_id,
+                ),
+            )
+            changed = cursor.rowcount > 0
+        return changed
+
+    def insert_news_telemetry(self, telemetry: NewsTelemetryRecord) -> None:
+        """Upsert news telemetry via INSERT OR REPLACE."""
+        query = """
+        INSERT OR REPLACE INTO news_telemetry (
+            event_id, symbol, release_ts, actual_val, consensus_val,
+            peak_spread_pts, max_z_score, range_1m, range_5m,
+            range_15m, range_60m
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                query,
+                (
+                    telemetry.event_id,
+                    telemetry.symbol,
+                    telemetry.release_ts,
+                    telemetry.actual_val,
+                    telemetry.consensus_val,
+                    telemetry.peak_spread_pts,
+                    telemetry.max_z_score,
+                    telemetry.range_1m,
+                    telemetry.range_5m,
+                    telemetry.range_15m,
+                    telemetry.range_60m,
+                ),
             )
