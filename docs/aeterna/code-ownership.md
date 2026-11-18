@@ -23,6 +23,12 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/execution/` | Bridge MT5 Exness, server-side SL/TP, order lifecycle | `aeterna-execution` | OMP | A | `GATE-M5-HUMAN` |
 | `engine/telegram_bot/` | Interface admin, notifikasi alert, inline control 2-step | `aeterna-execution` | OMP | A | `TEST-TEL-*` |
 | `engine/shared/db/` | Shared SQLite WAL connection & repository IPC layer | `aeterna-architect` | OMP | A | `TEST-DB-*` |
+| `engine/runtime/loop_a.py` | Fast-tick 2s polling, spread guard, state IPC, dan event penutup M15 | `aeterna-risk` | OMP | A | `tests/runtime/test_loop_a.py` |
+| `engine/runtime/loop_b.py` | Evaluasi bar M15 tertutup menjadi observasi sinyal virtual deterministik | `aeterna-strategy` | OMP | A | `tests/runtime/test_loop_b.py` |
+| `engine/runtime/virtual_tracker.py` | Penilaian outcome virtual 5 lapis exit tanpa eksekusi dana riil | `aeterna-backtest` | OMP | A | `tests/runtime/test_virtual_tracker.py` |
+| `engine/runtime/dashboard.py` | Formatter observasi internal admin-only yang patuh batas publikasi | `aeterna-architect` | OMP | A | `tests/runtime/test_runtime_service.py` |
+| `engine/runtime/runtime_service.py` | Orkestrasi siklus hidup tri-loop dan tracker tanpa order riil | `aeterna-lead` | OMP | A | `tests/runtime/test_runtime_service.py` |
+| `tests/runtime/` | Golden test deterministik untuk runtime tri-loop dan virtual journal | `aeterna-verifier` | OMP | A | `uv run pytest tests/runtime/ -v` |
 | `engine/monitoring/` | Daily reporting metrics, audit trail, dump Parquet | `aeterna-architect` | OMP | B | `TEST-DB-*` |
 | `db/` | Canonical DDL SQLite WAL schema (SSoT untuk Python & Go) | `aeterna-architect` | Lead / OMP | A | `test_canonical_schema_file_on_disk` |
 | `instruments/xauusd/config/` | Starting parameters YAML XAUUSD v1.0 (read-only config) | `aeterna-strategy` | OMP | A | Schema validation test |
