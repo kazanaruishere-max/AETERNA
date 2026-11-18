@@ -71,3 +71,15 @@ Matriks penelusuran persyaratan sistem dari dokumen acuan tingkat tinggi (`PRD.m
 | `REQ-TEL-002` | sec §2.2 | Ephemeral callback nonce 60 detik untuk pencegahan replay attack | M6 | COVERED | TASK-M6-STREAM-A, TASK-M6-STREAM-C | `test_telegram_auth.py`, `test_telegram_client.py` | VERIFIED |
 | `REQ-TEL-003` | sec §2.3 | Two-step confirmation (batas 15s) untuk Killswitch dan Force Close All | M6 | COVERED | TASK-M6-STREAM-A, TASK-M6-STREAM-C | `test_telegram_auth.py`, `test_telegram_client.py` | VERIFIED |
 | `REQ-TEL-004` | arch §6.3 | Laporan harian otomatis: PnL, Win/Loss, Max DD, waktu PAUSED, link Myfxbook | M6 | COVERED | TASK-M6-STREAM-B, TASK-M6-STREAM-C | `test_reporting.py`, `test_telegram_client.py` | VERIFIED |
+
+---
+
+## 6. Runtime Tri-Loop & Virtual Journal (ADR-020)
+
+| REQ ID | Sumber | Deskripsi Persyaratan | Target | Disposisi | Task ID | Test / Gate | Status |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| `REQ-RUNTIME-001` | ADR-020 Fase 1 / `db/schema.sql` | DDL STRICT `bar_cursors`, `signal_observations`, `news_telemetry` + repository idempoten | M3 | COVERED | TASK-RUNTIME-01 | `tests/test_database.py` | VERIFIED |
+| `REQ-RUNTIME-002` | ADR-020 Fase 2 / `engine/runtime/loop_a.py` | Loop A 2s non-blocking, spread guard, `system_state` IPC, event penutup M15 | M3 | COVERED | TASK-RUNTIME-02 | `tests/runtime/test_loop_a.py` | VERIFIED |
+| `REQ-RUNTIME-003` | ADR-020 Fase 3 / `REQ-STR-002`, `REQ-STR-007` | Loop B M15: Kronos H4 512 candle, R:R >= 2.0, observasi idempoten, cursor restart-safe | M3 | COVERED | TASK-RUNTIME-03 | `tests/runtime/test_loop_b.py` | VERIFIED |
+| `REQ-RUNTIME-004` | ADR-020 Fase 4 / `REQ-RSK-005`, `REQ-RSK-007` | Virtual journal outcome deterministik untuk 5 lapis exit tanpa order riil | M4 | COVERED | TASK-RUNTIME-04 | `tests/runtime/test_virtual_tracker.py` | VERIFIED |
+| `REQ-RUNTIME-005` | ADR-020 Fase 5 / `REQ-TEL-001`, `REQ-TEL-004` | Orkestrasi tri-loop + dashboard observasi admin-only; bukan instruksi transaksi publik | M6 | COVERED | TASK-RUNTIME-05 | `GATE-M4`, `GATE-M5`, `tests/runtime/test_runtime_service.py` | VERIFIED |

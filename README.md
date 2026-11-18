@@ -23,7 +23,7 @@
 
 The engine strictly enforces a **Zero-LLM Live Execution Boundary**: Large Language Models and autonomous sub-agents are utilized exclusively offline as engineering and development tooling. All runtime market data evaluation, statistical regime classification, dynamic position sizing, and broker trade executions are 100% deterministic, executed across a polyglot architecture:
 
-- **Python (3.12+)**: High-level strategy orchestration, multi-timeframe feature pipelines, Kronos ONNX Runtime CPU inference, and asynchronous Telegram administration.
+- **Python (3.12+)**: High-level strategy orchestration, Tri-Loop runtime architecture (Loop A 2s fast-tick guard, Loop B M15 structural analysis, Virtual Signal Tracker mark-to-market journal, and Signal-Only Admin Dashboard), multi-timeframe feature pipelines, Kronos ONNX Runtime CPU inference, and asynchronous Telegram administration.
 - **Rust (PyO3 C-Extension)**: Ultra-low latency backtesting engine, Exness-specific adaptive slippage modeling, and 1,000-iteration Monte Carlo permutation verification.
 - **Go (Watchdog Daemon)**: Independent out-of-process supervisor running locally on `127.0.0.1:20129`, acting as an unbypassable master risk gate, deadman switch, and emergency circuit breaker.
 
@@ -35,85 +35,74 @@ The system operates continuously across eight deterministic pipeline stages, ens
 
 ### System Architecture & Operational Flowchart
 
-```mermaid
+> Flowchart syntax powered by [Pele](https://pele.run/) (ultra-fast, native CSS-themed diagram renderer).
+
+```pele
 flowchart TD
     subgraph S1["Stage 1: Multi-Source Market Ingestion"]
-        MT5["MetaTrader 5 Exness<br/>(M1, M15, H1, H4 OHLCV & Tick Volume)"]
-        OANDA["OANDA v20 REST API<br/>(Retail Position & Order Book Skew)"]
+        MT5["MetaTrader 5 Exness<br/>(Tick Stream, M1, M15, H1, H4 OHLCV)"]
+        OANDA["OANDA v20 REST API<br/>(Retail Sentiment & Book Skew)"]
         FRED["FRED API Macro Feed<br/>(US TIPS 10Y Yield & DXY Proxy)"]
-        SQLITE[("Canonical SQLite WAL Tables<br/>market_candles & macro_features_cache")]
+        SQLITE[("Canonical SQLite WAL Tables<br/>market_candles, bar_cursors,<br/>signal_observations, news_telemetry")]
         MT5 --> SQLITE
         OANDA --> SQLITE
         FRED --> SQLITE
     end
 
-    subgraph S2["Stage 2: Spread & News State Machine"]
-        EWMA["EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
-        NEWS_CAL["FRED Macro Calendar Blackout<br/>T - 10 Minutes Window"]
-        STATE_CHECK{"System State == NORMAL?"}
-        EWMA --> STATE_CHECK
-        NEWS_CAL --> STATE_CHECK
+    subgraph S2["Stage 2: Loop A (Fast-Tick 2s Engine & Spread Guard)"]
+        TICK_POLL["2.0s Non-Blocking Tick Poller<br/>(asyncio.to_thread under MT5 RLock)"]
+        EWMA["Online EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
+        NEWS_CAL["High-Impact News Blackout Window<br/>(T - 10 Minutes Buffer)"]
+        STATE_IPC{"System State == NORMAL?"}
+        BAR_CLOSE{"M15 Bar Closed?"}
+
+        TICK_POLL --> EWMA --> STATE_IPC
+        NEWS_CAL --> STATE_IPC
+        TICK_POLL --> BAR_CLOSE
     end
     SQLITE --> S2
 
-    BLOCK1["Block Entry Order<br/>Log to blocked_signals"]
-    STATE_CHECK -- "NO (PAUSED / PRE_NEWS / RECOVERY)" --> BLOCK1
+    BLOCK_PAUSE["State = PAUSED / RECOVERY<br/>Inhibit Entry Signals"]
+    STATE_IPC -- "NO (Spread Spike / News)" --> BLOCK_PAUSE
 
-    subgraph S3["Stage 3: Deep Market Regime Classification"]
-        CTX["512 Closed H4 Bars<br/>(~3.5–4 Months Context)"]
-        SCALE["Zero-Leakage RollingFeatureScaler<br/>Temporal Gate: max(X) < y"]
-        KRONOS["Kronos ONNX Runtime CPU<br/>(Inference Latency <5ms)"]
-        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Confidence ≥0.60)"]
-        CTX --> SCALE --> KRONOS --> REGIME
+    subgraph S3["Stage 3: Loop B (M15 Structural Analysis & Kronos Regime)"]
+        M15_EVT["m15_event Triggered<br/>(Replay-Safe Cursor Tracking)"]
+        CTX["512 Closed H4 Bars Context<br/>Zero-Leakage RollingFeatureScaler"]
+        KRONOS["Kronos ONNX Runtime CPU<br/>(Deterministic Latency <5ms, Zero-LLM)"]
+        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Conf ≥60%)"]
+        STRAT_GATE["Multi-Timeframe Strategy Pool<br/>Reward-to-Risk Ratio ≥ 2.0 Gate"]
+        OBS_EMIT["Emit SignalObservationRecord<br/>(Idempotent Write to SQLite)"]
+
+        BAR_CLOSE -- "YES" --> M15_EVT
+        M15_EVT --> CTX --> KRONOS --> REGIME --> STRAT_GATE --> OBS_EMIT
     end
-    STATE_CHECK -- "YES" --> S3
+    STATE_IPC -- "YES" --> S3
 
-    subgraph S4["Stage 4: Multi-Timeframe Strategy Pool"]
-        ST1["Strategy 1: Volatility Breakout (M15)<br/>Donchian 20 + ATR Expansion (>1.2x)"]
-        ST2["Strategy 2: Positioning Contrarian (H1/M15)<br/>OANDA Retail Crowding >75%"]
-        ST3["Strategy 3: Macro Intermarket<br/>TIPS 10Y 20d Delta & DXY Trend"]
-        ST4["Strategy 4: Adaptive Mean-Reversion (M15)<br/>Ranging Regime Only + RSI(14) + Volatility Band"]
-        RR_GATE{"Reward-to-Risk ≥ 2.0?"}
-        ST1 & ST2 & ST3 & ST4 --> RR_GATE
-    end
-    REGIME --> S4
+    subgraph S4["Stage 4: Virtual Signal Tracker (Mark-to-Market 2s)"]
+        POLL_OBS["Poll Open Signal Observations<br/>(Zero Capital Risk / $0 Modal Riil)"]
+        EXIT_5L["Deterministic 5-Layer Exit Evaluation:<br/>• L1: Fixed SL/TP with Real Bid/Ask Spread Cost<br/>• L2: Dynamic Breakeven (+1.0R)<br/>• L3: Min-Lot 0.01 Partial Skip Handling<br/>• L4: Time Invalidation (8 M15 Bars / 7200s)<br/>• L5: Regime Invalidation (H4 Flip)<br/>• Rollover: Force Exit 15m Before Bank Break"]
+        UPDATE_JRNL["Update Observation Outcome & Realized Net R<br/>(Virtual Forward-Test Journal)"]
 
-    RR_GATE -- "NO" --> BLOCK1
-
-    subgraph S5["Stage 5: Master Risk Gate & Sizing (Go Watchdog)"]
-        WATCHDOG["Independent Go Watchdog Daemon<br/>(127.0.0.1:20129 / Pure Read-Only WAL)"]
-        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > $0<br/>• Daily Loss < 2.0%<br/>• Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
-        SIZING["Graduated Liquidity Sizing:<br/>• Normal Volume: 100% (0.5% Risk)<br/>• Thin Liquidity (Z_vol < -2.0): 50%<br/>• Rollover / Holiday: 0% Block"]
-        WATCHDOG --> RISK_CHECK --> SIZING
-    end
-    RR_GATE -- "YES (Candidate TradeSignal)" --> S5
-
-    RISK_CHECK -- "FAIL" --> BLOCK1
-
-    subgraph S6["Stage 6: Broker Bridge Execution"]
-        LOCK["threading.RLock() Mutual Exclusion"]
-        BRIDGE["ExnessBrokerBridge (MetaTrader 5)"]
-        SERVER_ORDER["Mandatory Server-Side SL & TP Attached<br/>SL = 1.5 * ATR(14) | Dynamic IOC/FOK"]
-        LOCK --> BRIDGE --> SERVER_ORDER
-    end
-    SIZING --> S6
-
-    subgraph S7["Stage 7: Active 5-Layer Exit Management"]
-        L1["Layer 1: Fixed Server-Side SL & TP"]
-        L2["Layer 2: Trailing Stop to Break-Even at +1.0R"]
-        L3["Layer 3: Partial Scale-Out 50% Volume at +1.0R"]
-        L4["Layer 4: Time Invalidation (8 M15 Bars / 2 Hours)"]
-        L5["Layer 5: Regime Invalidation (H4 Direction Reversal)"]
-        L_ROLL["Daily Rollover Force Close: 15m Before Break"]
-        SERVER_ORDER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
+        OBS_EMIT --> POLL_OBS --> EXIT_5L --> UPDATE_JRNL
     end
 
-    subgraph S8["Stage 8: Alerting & Telegram Operations"]
-        BOT_CTRL["Telegram Control Bot (Admin Chat)<br/>• Whitelist ID & 60s Ephemeral Nonce<br/>• 15s Two-Step Confirmation<br/>• Commands: /status, /report, /pause, /killswitch"]
-        CHAN_ALERT["Telegram Signal Broadcast Channel<br/>• Formatted Signal Alert (Strict Jargon Purity)<br/>• Candlestick Chart PNG with SL/TP Overlay"]
-        DAILY_REP["Daily Session Metrics Reporter<br/>• Net P&L, Win Ratio, Max Intraday Drawdown"]
+    subgraph S5["Stage 5: Master Risk Gate (Independent Go Watchdog)"]
+        WATCHDOG["Independent Go Watchdog Supervisor<br/>(127.0.0.1:20129 / Read-Only SQLite WAL)"]
+        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > 0<br/>• Daily Loss < 2.0%<br/>• Max Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
+        KILLSWITCH["Emergency Deadman & SIGKILL Escalation<br/>(Process Termination on Breach)"]
+
+        WATCHDOG --> RISK_CHECK
+        RISK_CHECK -- "Breach" --> KILLSWITCH
     end
-    S7 --> S8
+
+    subgraph S6["Stage 6: Orchestration & Admin Observation Dashboard"]
+        TASK_GROUP["RuntimeService (asyncio.TaskGroup)<br/>Concurrently Manages Loop A, Loop B, Tracker & Publisher"]
+        PURITY_CHECK["Observation Card Lexical Purity Filter<br/>(Strict Rejection of Lot, Equity, Ticket, Imperatives)"]
+        TELEGRAM_ADMIN["Telegram Admin-Only Dashboard<br/>(Whitelisted Admin ID, Silent Drop Non-Admin)"]
+
+        TASK_GROUP --> UPDATE_JRNL
+        UPDATE_JRNL --> PURITY_CHECK --> TELEGRAM_ADMIN
+    end
 ```
 
 ```
@@ -273,7 +262,7 @@ AETERNA - QUANT PROJECT/
 │   ├── latest.md                    # Single Source of Truth for current session state
 │   └── tasks/                       # Self-contained task packets (TASK-M*-*.md)
 ├── db/
-│   └── schema.sql                   # Canonical SQLite WAL schema (v1.0 DDL - 5 core tables)
+│   └── schema.sql                   # Canonical SQLite WAL schema (market_candles, bar_cursors, signal_obs, news)
 ├── docs/                            # Architectural & Operational Documentation
 │   ├── PRD.md                       # Product Requirements Document
 │   ├── architecture.md              # End-to-end technical architecture & mathematical specs
@@ -293,6 +282,12 @@ AETERNA - QUANT PROJECT/
 │   │   └── kronos/                  # Kronos H4 ONNX Runtime CPU inference & feature scaler
 │   ├── monitoring/                  # Daily session metrics, SQLite audit ledger, reporting
 │   ├── risk_gate/                   # Graduated liquidity sizing (Z_vol) and pre-rollover guard
+│   ├── runtime/                     # Tri-loop runtime, virtual tracker & observation dashboard
+│   │   ├── loop_a.py                # 2s fast-tick polling, spread guard, M15 event emitter
+│   │   ├── loop_b.py                # M15 analysis loop, Kronos inference, deterministic signal gate
+│   │   ├── virtual_tracker.py       # Mark-to-market virtual forward-test tracker (5-layer exit)
+│   │   ├── dashboard.py             # Admin-only observation card formatter & purity validator
+│   │   └── runtime_service.py       # Asynchronous TaskGroup orchestrator for tri-loop lifecycle
 │   ├── security/                    # Windows DPAPI encryption, log sanitization, and ACL lockdown
 │   ├── state_machine/               # Online EWMA spread baseline (α=0.08) & Z-score news gate
 │   ├── telegram_bot/                # Admin control panel, 2-step confirmation, signal templates
@@ -306,8 +301,9 @@ AETERNA - QUANT PROJECT/
 │   ├── audit_security.py            # Local unified SCA vulnerability auditor (pip, cargo, go)
 │   ├── setup_secrets.py             # Offline interactive DPAPI secret bootstrapping
 │   └── verify_ecosystem.py          # 5-Pillar automated safety & invariant audit runner
-└── tests/                           # Complete Verification Test Suite (186+ deterministic tests)
+└── tests/                           # Complete Verification Test Suite (234+ deterministic tests)
     ├── analysis/                    # Backtest runner, indicators, PyO3 parity, Kronos, Macro tests
+    ├── runtime/                     # Loop A, Loop B, Virtual Tracker, RuntimeService golden tests
     └── strategies/                  # Strategy execution, bracket bounds, and regime filter tests
 ```
 
