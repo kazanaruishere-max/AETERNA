@@ -35,12 +35,10 @@ Sistem beroperasi terus-menerus melalui tahapan pipeline deterministik untuk mem
 
 ### Diagram Alur Kerja & Arsitektur Sistem (Flowchart)
 
-> Diagram flowchart dirender menggunakan library [Pele](https://pele.run/) (renderer diagram ultra-cepat berbasis SVG & CSS).
-
-```pele
+```mermaid
 flowchart TD
     subgraph S1["Tahap 1: Ingestion Data Pasar Multi-Sumber"]
-        MT5["MetaTrader 5 Exness<br/>(Aliran Tick, M1, M15, H1, H4 OHLCV)"]
+        MT5["MetaTrader 5 Exness<br/>(M1, M15, H1, H4 OHLCV & Volume Tick)"]
         OANDA["OANDA v20 REST API<br/>(Rasio Sentimen & Buku Pesanan Ritel)"]
         FRED["FRED API Pakan Makro<br/>(Imbal Hasil US TIPS 10Y & Proxy DXY)"]
         SQLITE[("Tabel Kanonik SQLite WAL<br/>market_candles, bar_cursors,<br/>signal_observations, news_telemetry")]
@@ -49,60 +47,93 @@ flowchart TD
         FRED --> SQLITE
     end
 
-    subgraph S2["Tahap 2: Loop A (Fast-Tick 2s Engine & Spread Guard)"]
+    subgraph S2["Tahap 2: Runtime Loop A (Fast-Tick 2s & Spread Guard)"]
         TICK_POLL["2.0s Poller Tick Non-Blocking<br/>(asyncio.to_thread di bawah MT5 RLock)"]
         EWMA["Baseline Spread EWMA Online (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
-        NEWS_CAL["Jendela Blackout Kalender Makro FRED<br/>(Buffer T - 10 Menit)"]
-        STATE_IPC{"Status Sistem == NORMAL?"}
+        NEWS_CAL["Jendela Blackout Kalender Makro FRED<br/>T - 10 Menit Sebelum Rilis"]
+        STATE_CHECK{"Status Sistem == NORMAL?"}
         BAR_CLOSE{"Bar M15 Tertutup?"}
 
-        TICK_POLL --> EWMA --> STATE_IPC
-        NEWS_CAL --> STATE_IPC
+        TICK_POLL --> EWMA --> STATE_CHECK
+        NEWS_CAL --> STATE_CHECK
         TICK_POLL --> BAR_CLOSE
     end
     SQLITE --> S2
 
-    BLOCK_PAUSE["Status = PAUSED / RECOVERY<br/>Hentikan Pembentukan Sinyal Baru"]
-    STATE_IPC -- "TIDAK (Spread Spike / Berita)" --> BLOCK_PAUSE
+    BLOCK1["Blokir Pesanan Masuk<br/>Catat ke blocked_signals"]
+    STATE_CHECK -- "TIDAK (PAUSED / PRE_NEWS / RECOVERY)" --> BLOCK1
 
-    subgraph S3["Tahap 3: Loop B (Analisis Struktural M15 & Rezim Kronos)"]
+    subgraph S3["Tahap 3: Runtime Loop B & Klasifikasi Rezim Kronos"]
         M15_EVT["m15_event Terpicu<br/>(Pelacakan Kursor Replay-Safe di bar_cursors)"]
-        CTX["512 Bar Penutupan H4<br/>Zero-Leakage RollingFeatureScaler"]
-        KRONOS["Kronos ONNX Runtime CPU<br/>(Latensi Deterministik <5ms, Zero-LLM)"]
-        REGIME["Rezim H4 Terklasifikasi:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Keyakinan ≥60%)"]
-        STRAT_GATE["Kumpulan Strategi Multi-Timeframe<br/>Gerbang Reward-to-Risk Ratio ≥ 2.0"]
-        OBS_EMIT["Terbitkan SignalObservationRecord<br/>(Penyimpanan Idempoten ke SQLite)"]
-
+        CTX["512 Bar Penutupan H4<br/>(~3.5–4 Bulan Data Historis)"]
+        SCALE["Zero-Leakage RollingFeatureScaler<br/>Temporal Gate: max(X) < y"]
+        KRONOS["Kronos ONNX Runtime CPU<br/>(Latensi Inferensi <5ms, Zero-LLM)"]
+        REGIME["Rezim H4 Terklasifikasi:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Keyakinan ≥0.60)"]
+        
         BAR_CLOSE -- "YA" --> M15_EVT
-        M15_EVT --> CTX --> KRONOS --> REGIME --> STRAT_GATE --> OBS_EMIT
+        M15_EVT --> CTX --> SCALE --> KRONOS --> REGIME
     end
-    STATE_IPC -- "YA" --> S3
+    STATE_CHECK -- "YA" --> S3
 
-    subgraph S4["Tahap 4: Virtual Signal Tracker (Mark-to-Market 2s)"]
-        POLL_OBS["Polling Observasi Sinyal Aktif<br/>(Zero Capital Risk / $0 Modal Riil)"]
-        EXIT_5L["Evaluasi Exit Deterministik 5 Lapis:<br/>• L1: Fixed SL/TP dengan Biaya Real Spread Bid/Ask<br/>• L2: Dynamic Breakeven di +1.0R<br/>• L3: Min-Lot 0.01 Partial Skip Handling<br/>• L4: Time Invalidation (8 Bar M15 / 7200s)<br/>• L5: Regime Invalidation (Pembalikan Arah H4)<br/>• Rollover: Force Exit 15m Sebelum Bank Break"]
-        UPDATE_JRNL["Update Hasil Observasi & R Bersih Terealisasi<br/>(Virtual Forward-Test Journal)"]
-
-        OBS_EMIT --> POLL_OBS --> EXIT_5L --> UPDATE_JRNL
+    subgraph S4["Tahap 4: Kumpulan Strategi Multi-Timeframe & Gerbang Sinyal"]
+        ST1["Strategi 1: Volatility Breakout (M15)<br/>Donchian 20 + Ekspansi ATR (>1.2x)"]
+        ST2["Strategi 2: Positioning Contrarian (H1/M15)<br/>Crowding Ritel OANDA >75%"]
+        ST3["Strategi 3: Makro Antar-Pasar<br/>Delta 20 Hari TIPS 10Y & Tren DXY"]
+        ST4["Strategi 4: Mean-Reversion Adaptif (M15)<br/>Khusus Rezim Ranging + RSI(14) + Volatility Band"]
+        RR_GATE{"Reward-to-Risk ≥ 2.0?"}
+        OBS_EMIT["Terbitkan SignalObservationRecord<br/>(Penyimpanan Idempoten ke SQLite)"]
+        
+        ST1 & ST2 & ST3 & ST4 --> RR_GATE
+        RR_GATE -- "YA (Kandidat Observasi)" --> OBS_EMIT
     end
+    REGIME --> S4
 
-    subgraph S5["Tahap 5: Master Risk Gate (Go Watchdog Independen)"]
-        WATCHDOG["Pengawas Watchdog Go Independen<br/>(127.0.0.1:20129 / Read-Only SQLite WAL)"]
-        RISK_CHECK{"Pemeriksaan Batas Pra-Order:<br/>• Ekuitas Akun > $0<br/>• Kerugian Harian < 2.0%<br/>• Max Drawdown < 10.0%<br/>• Posisi Terbuka == 0<br/>• Transaksi Hari Ini < 5"}
+    RR_GATE -- "TIDAK" --> BLOCK1
+
+    subgraph S5["Tahap 5: Master Risk Gate & Sizing (Go Watchdog)"]
+        WATCHDOG["Daemon Watchdog Go Independen<br/>(127.0.0.1:20129 / Murni Read-Only WAL)"]
+        RISK_CHECK{"Pemeriksaan Batas Pra-Order:<br/>• Ekuitas Akun > $0<br/>• Kerugian Harian < 2.0%<br/>• Drawdown < 10.0%<br/>• Posisi Terbuka == 0<br/>• Transaksi Hari Ini < 5"}
+        SIZING["Graduated Liquidity Sizing:<br/>• Volume Normal: 100% (Risiko 0.5%)<br/>• Likuiditas Tipis (Z_vol < -2.0): 50%<br/>• Rollover / Libur Bank: 0% Blokir"]
         KILLSWITCH["Emergency Deadman & Eskalasi SIGKILL<br/>(Terminasi Proses jika Terjadi Anomali)"]
 
-        WATCHDOG --> RISK_CHECK
-        RISK_CHECK -- "Pelanggaran" --> KILLSWITCH
+        WATCHDOG --> RISK_CHECK --> SIZING
+        RISK_CHECK -- "GAGAL / PELANGGARAN" --> KILLSWITCH
+    end
+    OBS_EMIT --> S5
+
+    RISK_CHECK -- "GAGAL" --> BLOCK1
+
+    subgraph S6["Tahap 6: Eksekusi Broker Bridge (Signal-Only Default)"]
+        LOCK["threading.RLock() Mutual Exclusion"]
+        BRIDGE["ExnessBrokerBridge (MetaTrader 5)"]
+        SERVER_ORDER["Server-Side SL & TP Terpasang Wajib<br/>SL = 1.5 * ATR(14) | Dinamis IOC/FOK<br/>(Terkunci sampai Lolos Audit Manusia GATE-M4/M5)"]
+        LOCK --> BRIDGE --> SERVER_ORDER
+    end
+    SIZING --> S6
+
+    subgraph S7["Tahap 7: Manajemen Exit 5 Lapis Aktif & Virtual Tracker"]
+        V_TRACKER["Virtual Signal Tracker (Polling 2s)<br/>Jurnal Forward Mark-to-Market ($0 Risiko)"]
+        L1["Lapis 1: Fixed Server-Side SL & TP (Real Spread Cost)"]
+        L2["Lapis 2: Trailing Stop ke Break-Even di +1.0R"]
+        L3["Lapis 3: Partial Scale-Out (Skip di Min-Lot 0.01)"]
+        L4["Lapis 4: Time Invalidation (8 Bar M15 / 2 Jam)"]
+        L5["Lapis 5: Regime Invalidation (Pembalikan Arah H4)"]
+        L_ROLL["Likuidasi Rollover Wajib: 15m Sebelum Daily Break"]
+        
+        SERVER_ORDER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
+        OBS_EMIT -.-> V_TRACKER
+        V_TRACKER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
     end
 
-    subgraph S6["Tahap 6: Orkestrasi & Dashboard Observasi Admin"]
-        TASK_GROUP["RuntimeService (asyncio.TaskGroup)<br/>Konkuren Menjalankan Loop A, Loop B, Tracker & Publisher"]
-        PURITY_CHECK["Filter Leksikal Purity Kartu Observasi<br/>(Tolak Keras: Lot, Ekuitas, Tiket, Instruksi Jual/Beli)"]
-        TELEGRAM_ADMIN["Dashboard Khusus Admin Telegram<br/>(Whitelist Admin ID, Silent Drop untuk Non-Admin)"]
+    subgraph S8["Tahap 8: Orkestrasi & Operasional Telegram Admin"]
+        SVC["RuntimeService (asyncio.TaskGroup)<br/>Manajemen Siklus Hidup Tri-Loop & Tracker"]
+        BOT_CTRL["Telegram Control Bot (Chat Admin)<br/>• Whitelist ID & Nonce Sekali Pakai 60s<br/>• Konfirmasi 2 Langkah 15s"]
+        DASHBOARD["Dashboard Observasi Signal-Only<br/>• Filter Purity Leksikal (Tolak Token Jual Sinyal)<br/>• Kartu Bias Struktur Pasar Internal"]
+        DAILY_REP["Pelapor Metrik Sesi Harian<br/>• Net P&L, Rasio Win/Loss, Drawdown Intraday"]
 
-        TASK_GROUP --> UPDATE_JRNL
-        UPDATE_JRNL --> PURITY_CHECK --> TELEGRAM_ADMIN
+        SVC --> DASHBOARD
     end
+    S7 --> S8
 ```
 
 ```

@@ -35,13 +35,11 @@ The system operates continuously across eight deterministic pipeline stages, ens
 
 ### System Architecture & Operational Flowchart
 
-> Flowchart syntax powered by [Pele](https://pele.run/) (ultra-fast, native CSS-themed diagram renderer).
-
-```pele
+```mermaid
 flowchart TD
     subgraph S1["Stage 1: Multi-Source Market Ingestion"]
-        MT5["MetaTrader 5 Exness<br/>(Tick Stream, M1, M15, H1, H4 OHLCV)"]
-        OANDA["OANDA v20 REST API<br/>(Retail Sentiment & Book Skew)"]
+        MT5["MetaTrader 5 Exness<br/>(M1, M15, H1, H4 OHLCV & Tick Volume)"]
+        OANDA["OANDA v20 REST API<br/>(Retail Position & Order Book Skew)"]
         FRED["FRED API Macro Feed<br/>(US TIPS 10Y Yield & DXY Proxy)"]
         SQLITE[("Canonical SQLite WAL Tables<br/>market_candles, bar_cursors,<br/>signal_observations, news_telemetry")]
         MT5 --> SQLITE
@@ -49,60 +47,93 @@ flowchart TD
         FRED --> SQLITE
     end
 
-    subgraph S2["Stage 2: Loop A (Fast-Tick 2s Engine & Spread Guard)"]
-        TICK_POLL["2.0s Non-Blocking Tick Poller<br/>(asyncio.to_thread under MT5 RLock)"]
-        EWMA["Online EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
-        NEWS_CAL["High-Impact News Blackout Window<br/>(T - 10 Minutes Buffer)"]
-        STATE_IPC{"System State == NORMAL?"}
+    subgraph S2["Stage 2: Runtime Loop A (Fast-Tick 2s & Spread Guard)"]
+        TICK_POLL["2.0s Fast-Tick Non-Blocking Poller<br/>(asyncio.to_thread under MT5 RLock)"]
+        EWMA["EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
+        NEWS_CAL["FRED Macro Calendar Blackout<br/>T - 10 Minutes Window"]
+        STATE_CHECK{"System State == NORMAL?"}
         BAR_CLOSE{"M15 Bar Closed?"}
 
-        TICK_POLL --> EWMA --> STATE_IPC
-        NEWS_CAL --> STATE_IPC
+        TICK_POLL --> EWMA --> STATE_CHECK
+        NEWS_CAL --> STATE_CHECK
         TICK_POLL --> BAR_CLOSE
     end
     SQLITE --> S2
 
-    BLOCK_PAUSE["State = PAUSED / RECOVERY<br/>Inhibit Entry Signals"]
-    STATE_IPC -- "NO (Spread Spike / News)" --> BLOCK_PAUSE
+    BLOCK1["Block Entry Order<br/>Log to blocked_signals"]
+    STATE_CHECK -- "NO (PAUSED / PRE_NEWS / RECOVERY)" --> BLOCK1
 
-    subgraph S3["Stage 3: Loop B (M15 Structural Analysis & Kronos Regime)"]
-        M15_EVT["m15_event Triggered<br/>(Replay-Safe Cursor Tracking)"]
-        CTX["512 Closed H4 Bars Context<br/>Zero-Leakage RollingFeatureScaler"]
-        KRONOS["Kronos ONNX Runtime CPU<br/>(Deterministic Latency <5ms, Zero-LLM)"]
-        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Conf ≥60%)"]
-        STRAT_GATE["Multi-Timeframe Strategy Pool<br/>Reward-to-Risk Ratio ≥ 2.0 Gate"]
-        OBS_EMIT["Emit SignalObservationRecord<br/>(Idempotent Write to SQLite)"]
-
+    subgraph S3["Stage 3: Runtime Loop B & Kronos Regime Classification"]
+        M15_EVT["m15_event Triggered<br/>(Cursor Replay-Safe from bar_cursors)"]
+        CTX["512 Closed H4 Bars<br/>(~3.5–4 Months Context)"]
+        SCALE["Zero-Leakage RollingFeatureScaler<br/>Temporal Gate: max(X) < y"]
+        KRONOS["Kronos ONNX Runtime CPU<br/>(Inference Latency <5ms, Zero-LLM)"]
+        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Confidence ≥0.60)"]
+        
         BAR_CLOSE -- "YES" --> M15_EVT
-        M15_EVT --> CTX --> KRONOS --> REGIME --> STRAT_GATE --> OBS_EMIT
+        M15_EVT --> CTX --> SCALE --> KRONOS --> REGIME
     end
-    STATE_IPC -- "YES" --> S3
+    STATE_CHECK -- "YES" --> S3
 
-    subgraph S4["Stage 4: Virtual Signal Tracker (Mark-to-Market 2s)"]
-        POLL_OBS["Poll Open Signal Observations<br/>(Zero Capital Risk / $0 Modal Riil)"]
-        EXIT_5L["Deterministic 5-Layer Exit Evaluation:<br/>• L1: Fixed SL/TP with Real Bid/Ask Spread Cost<br/>• L2: Dynamic Breakeven (+1.0R)<br/>• L3: Min-Lot 0.01 Partial Skip Handling<br/>• L4: Time Invalidation (8 M15 Bars / 7200s)<br/>• L5: Regime Invalidation (H4 Flip)<br/>• Rollover: Force Exit 15m Before Bank Break"]
-        UPDATE_JRNL["Update Observation Outcome & Realized Net R<br/>(Virtual Forward-Test Journal)"]
+    subgraph S4["Stage 4: Multi-Timeframe Strategy Pool & Signal Gate"]
+        ST1["Strategy 1: Volatility Breakout (M15)<br/>Donchian 20 + ATR Expansion (>1.2x)"]
+        ST2["Strategy 2: Positioning Contrarian (H1/M15)<br/>OANDA Retail Crowding >75%"]
+        ST3["Strategy 3: Macro Intermarket<br/>TIPS 10Y 20d Delta & DXY Trend"]
+        ST4["Strategy 4: Adaptive Mean-Reversion (M15)<br/>Ranging Regime Only + RSI(14) + Volatility Band"]
+        RR_GATE{"Reward-to-Risk ≥ 2.0?"}
+        OBS_EMIT["Emit SignalObservationRecord<br/>(Idempotent Write to SQLite)"]
+        
+        ST1 & ST2 & ST3 & ST4 --> RR_GATE
+        RR_GATE -- "YES (Candidate Observation)" --> OBS_EMIT
+    end
+    REGIME --> S4
 
-        OBS_EMIT --> POLL_OBS --> EXIT_5L --> UPDATE_JRNL
+    RR_GATE -- "NO" --> BLOCK1
+
+    subgraph S5["Stage 5: Master Risk Gate & Sizing (Go Watchdog)"]
+        WATCHDOG["Independent Go Watchdog Daemon<br/>(127.0.0.1:20129 / Pure Read-Only WAL)"]
+        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > $0<br/>• Daily Loss < 2.0%<br/>• Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
+        SIZING["Graduated Liquidity Sizing:<br/>• Normal Volume: 100% (0.5% Risk)<br/>• Thin Liquidity (Z_vol < -2.0): 50%<br/>• Rollover / Holiday: 0% Block"]
+        KILLSWITCH["Emergency Deadman & SIGKILL Switch<br/>(Process Escalation on Freeze)"]
+
+        WATCHDOG --> RISK_CHECK --> SIZING
+        RISK_CHECK -- "FAIL / BREACH" --> KILLSWITCH
+    end
+    OBS_EMIT --> S5
+
+    RISK_CHECK -- "FAIL" --> BLOCK1
+
+    subgraph S6["Stage 6: Broker Bridge Execution (Signal-Only Default)"]
+        LOCK["threading.RLock() Mutual Exclusion"]
+        BRIDGE["ExnessBrokerBridge (MetaTrader 5)"]
+        SERVER_ORDER["Mandatory Server-Side SL & TP Attached<br/>SL = 1.5 * ATR(14) | Dynamic IOC/FOK<br/>(Locked until GATE-M4/M5 Human Clear)"]
+        LOCK --> BRIDGE --> SERVER_ORDER
+    end
+    SIZING --> S6
+
+    subgraph S7["Stage 7: Active 5-Layer Exit & Virtual Tracker"]
+        V_TRACKER["Virtual Signal Tracker (2s Polling)<br/>Mark-to-Market Forward Journal ($0 Risk)"]
+        L1["Layer 1: Fixed Server-Side SL & TP (Real Spread Cost)"]
+        L2["Layer 2: Trailing Stop to Break-Even at +1.0R"]
+        L3["Layer 3: Partial Scale-Out (Min-Lot 0.01 Skip Handled)"]
+        L4["Layer 4: Time Invalidation (8 M15 Bars / 2 Hours)"]
+        L5["Layer 5: Regime Invalidation (H4 Direction Reversal)"]
+        L_ROLL["Daily Rollover Force Close: 15m Before Break"]
+        
+        SERVER_ORDER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
+        OBS_EMIT -.-> V_TRACKER
+        V_TRACKER --> L1 & L2 & L3 & L4 & L5 & L_ROLL
     end
 
-    subgraph S5["Stage 5: Master Risk Gate (Independent Go Watchdog)"]
-        WATCHDOG["Independent Go Watchdog Supervisor<br/>(127.0.0.1:20129 / Read-Only SQLite WAL)"]
-        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > 0<br/>• Daily Loss < 2.0%<br/>• Max Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
-        KILLSWITCH["Emergency Deadman & SIGKILL Escalation<br/>(Process Termination on Breach)"]
+    subgraph S8["Stage 8: Orchestration & Admin Telegram Operations"]
+        SVC["RuntimeService (asyncio.TaskGroup)<br/>Concurrent Tri-Loop & Tracker Lifecycle"]
+        BOT_CTRL["Telegram Control Bot (Admin Chat)<br/>• Whitelist ID & 60s Ephemeral Nonce<br/>• 15s Two-Step Confirmation"]
+        DASHBOARD["Signal-Only Observation Dashboard<br/>• Lexical Purity Filter (Zero Vending Token)<br/>• Internal Structural Market Bias Card"]
+        DAILY_REP["Daily Session Metrics Reporter<br/>• Net P&L, Win Ratio, Max Intraday Drawdown"]
 
-        WATCHDOG --> RISK_CHECK
-        RISK_CHECK -- "Breach" --> KILLSWITCH
+        SVC --> DASHBOARD
     end
-
-    subgraph S6["Stage 6: Orchestration & Admin Observation Dashboard"]
-        TASK_GROUP["RuntimeService (asyncio.TaskGroup)<br/>Concurrently Manages Loop A, Loop B, Tracker & Publisher"]
-        PURITY_CHECK["Observation Card Lexical Purity Filter<br/>(Strict Rejection of Lot, Equity, Ticket, Imperatives)"]
-        TELEGRAM_ADMIN["Telegram Admin-Only Dashboard<br/>(Whitelisted Admin ID, Silent Drop Non-Admin)"]
-
-        TASK_GROUP --> UPDATE_JRNL
-        UPDATE_JRNL --> PURITY_CHECK --> TELEGRAM_ADMIN
-    end
+    S7 --> S8
 ```
 
 ```
