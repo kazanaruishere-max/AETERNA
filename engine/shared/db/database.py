@@ -401,6 +401,42 @@ class DatabaseManager:
             changed = cursor.rowcount > 0
         return changed
 
+    def get_open_signal_observations(
+        self, symbol: str
+    ) -> list[SignalObservationRecord]:
+        """Read active virtual observations for a symbol in deterministic order."""
+        query = """
+        SELECT signal_id, symbol, bar_ts, strategy_id, order_type, state,
+               entry_px, sl_px, tp_px, lot_virtual, partial_skipped_min_lot,
+               r_realized_net, exit_reason
+        FROM signal_observations
+        WHERE symbol = ? AND state IN (?, ?, ?, ?)
+        ORDER BY bar_ts ASC, signal_id ASC
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                query,
+                (symbol, "OPEN", "PARTIAL_SKIPPED_MIN_LOT", "RUNNING", "BE_ARMED"),
+            ).fetchall()
+        return [
+            SignalObservationRecord(
+                signal_id=row["signal_id"],
+                symbol=row["symbol"],
+                bar_ts=row["bar_ts"],
+                strategy_id=row["strategy_id"],
+                order_type=row["order_type"],
+                state=row["state"],
+                entry_px=row["entry_px"],
+                sl_px=row["sl_px"],
+                tp_px=row["tp_px"],
+                lot_virtual=row["lot_virtual"],
+                partial_skipped_min_lot=row["partial_skipped_min_lot"],
+                r_realized_net=row["r_realized_net"],
+                exit_reason=row["exit_reason"],
+            )
+            for row in rows
+        ]
+
     def insert_news_telemetry(self, telemetry: NewsTelemetryRecord) -> None:
         """Upsert news telemetry via INSERT OR REPLACE."""
         query = """
