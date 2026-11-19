@@ -1,6 +1,6 @@
 ---
 name: aeterna-handoff
-description: Protokol pencatatan state sesi, status milestone gate, task aktif OMP, dan mitigasi risiko ke .handoff/latest.md.
+description: Protokol pencatatan state sesi, status milestone gate, task aktif OMP, dan mitigasi risiko ke docs/aeterna/agent-state.md (tracked) dengan mirror lokal .handoff/latest.md.
 license: Proprietary
 compatibility: opencode
 metadata:
@@ -17,7 +17,7 @@ Menjamin kontinuitas proyek tanpa kehilangan konteks antara sesi kerja, antar-su
 - Gunakan pada awal sesi baru untuk memulihkan konteks kerja terakhir.
 
 # Hard rules
-1. File handoff disimpan di `.handoff/YYYY-MM-DD.md` dan disalin ke `.handoff/latest.md`.
+1. File handoff disimpan di `.handoff/YYYY-MM-DD.md`, disalin ke `.handoff/latest.md`, dan state ringkas/tracked wajib ditulis ke `docs/aeterna/agent-state.md`.
 2. Dilarang menyertakan kredensial, API key, atau kata sandi akun MT5 ke dalam file handoff.
 3. Wajib menyertakan Gate Ledger dengan status riil (tidak boleh mengasumsikan lulus tanpa bukti log).
 4. Wajib mencantumkan daftar risiko kritis (P0/P1) dan cara mendeteksinya.
@@ -34,7 +34,8 @@ Menjamin kontinuitas proyek tanpa kehilangan konteks antara sesi kerja, antar-su
 3. Kumpulkan task yang selesai, sedang aktif, dan terblokir.
 4. Tulis dokumen handoff mengikuti template resmi.
 5. Salin konten ke `.handoff/latest.md`.
-6. Informasikan ke operator ringkasan handoff 3 baris.
+6. Perbarui `docs/aeterna/agent-state.md` dengan state_version, branch, commit, active_task, allowed_paths, gate_status, dan next_action terbaru.
+7. Informasikan ke operator ringkasan handoff 3 baris.
 
 # Output contract
 ```markdown
@@ -66,7 +67,7 @@ Menjamin kontinuitas proyek tanpa kehilangan konteks antara sesi kerja, antar-su
 ```
 
 # Self-check
-1. [ ] Apakah `.handoff/latest.md` telah diperbarui?
+1. [ ] Apakah `docs/aeterna/agent-state.md` dan `.handoff/latest.md` telah diperbarui?
 2. [ ] Apakah tidak ada API key atau password di teks handoff?
 3. [ ] Apakah bukti command gate berasal dari output terminal riil?
 
