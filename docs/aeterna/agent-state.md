@@ -4,22 +4,22 @@ updated_utc: "2026-11-19"
 project: "AETERNA Quant"
 phase: "P1 Journal"
 mode: "SIGNAL_ONLY"
-active_role: "aeterna-backtest"
+active_role: "aeterna-verifier"
 active_task: "TASK-RUNTIME-06"
 task_packet: ".handoff/tasks/TASK-RUNTIME-06-TRACKER-GAP-CLOSURE.md"
-branch: "docs/readme-robust-ascii-workflow"
-authored_from_head: "441e73d"
-base_ref: "docs/readme-robust-ascii-workflow"
-base_commit: "441e73d"
-allowed_paths:
-  - "engine/runtime/virtual_tracker.py"
-  - "tests/runtime/test_virtual_tracker.py"
+branch: "feat/m4-virtual-tracker-gap-fix"
+authored_from_head: "ac49869"
+base_ref: "main"
+base_commit: "e8906df"
+main_head: "c620307"
+allowed_paths: []
 gate_status:
   GATE-RUNTIME-LOOP-B: "CHANGES_REQUESTED"
+  GATE-RUNTIME-VIRTUAL-TRACKER: "IN_REVIEW"
   GATE-M4: "PENDING_HUMAN_AUDIT"
   GATE-M5: "PENDING_HUMAN_AUDIT"
   GATE-VIRTUAL-JOURNAL: "QUEUED"
-next_action: "Jalankan Codex CLI pada task_packet TASK-RUNTIME-06; berhenti setelah PR, jangan merge."
+next_action: "Audit PR #62, jalankan test, lalu human merge setelah PASS."
 ---
 
 # AETERNA Agent State
@@ -52,6 +52,7 @@ AETERNA Quant adalah platform riset dan eksekusi XAUUSD deterministik. Fase akti
 
 ## 5. Stop conditions
 - `active_task` null: jangan menulis kode.
+- `allowed_paths` kosong: hanya audit read-only, jangan edit.
 - `base_commit` bukan ancestor dari HEAD: laporkan `BLOCKED`.
 - File di luar `allowed_paths`: stop.
 - Gate yang dibutuhkan task belum PASSED: laporkan `BLOCKED`.
