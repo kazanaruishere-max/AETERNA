@@ -35,6 +35,7 @@ from instruments.xauusd.strategies.volatility_breakout import SignalType
 logger = logging.getLogger("aeterna.runtime.loop_b")
 
 M15_SECONDS = 900
+H4_SECONDS = 14_400
 FETCH_TIMEOUT_SECONDS = 1.5
 
 
@@ -83,7 +84,10 @@ class AnalysisLoopB:
         self.strategy_id = type(strategy_evaluator).__name__
 
     async def run_once(self, bar_ts: int) -> SignalObservationRecord | None:
-        """Evaluate one closed M15 bar exactly once; None when gated or duplicate."""
+        """Evaluate one closed M15 bar exactly once; None when gated or duplicate.
+
+        bar_ts is the open-time of the M15 bar that has already closed.
+        """
         if bar_ts % M15_SECONDS != 0:
             raise ValueError(f"bar_ts must be an M15 floor, got {bar_ts}")
         if self._is_processed(bar_ts):
@@ -127,7 +131,12 @@ class AnalysisLoopB:
     async def run_forever(
         self, m15_event: asyncio.Event, stop_event: asyncio.Event
     ) -> None:
-        """Evaluate every signaled M15 close until stop_event is set."""
+        """Evaluate every signaled M15 close until stop_event is set.
+
+        Loop A fires m15_event when a tick enters a new M15 bar whose
+        open-time is floor(now/900)*900.  The bar that just closed is
+        therefore floor(now/900)*900 - 900, i.e. closed_bar_ts.
+        """
         logger.info("Loop B started symbol=%s", self.symbol)
         while not stop_event.is_set():
             try:
@@ -135,17 +144,22 @@ class AnalysisLoopB:
             except TimeoutError:
                 continue
             m15_event.clear()
-            bar_ts = (int(time.time()) // M15_SECONDS) * M15_SECONDS
-            if self._is_processed(bar_ts):
+            triggered_bar_ts = (int(time.time()) // M15_SECONDS) * M15_SECONDS
+            closed_bar_ts = triggered_bar_ts - M15_SECONDS
+            if self._is_processed(closed_bar_ts):
                 logger.info(
-                    "bar skipped symbol=%s bar_ts=%d reason=stale", self.symbol, bar_ts
+                    "bar skipped symbol=%s bar_ts=%d reason=stale",
+                    self.symbol,
+                    closed_bar_ts,
                 )
                 continue
             try:
-                await self.run_once(bar_ts)
+                await self.run_once(closed_bar_ts)
             except Exception:
                 logger.exception(
-                    "bar evaluation failed symbol=%s bar_ts=%d", self.symbol, bar_ts
+                    "bar evaluation failed symbol=%s bar_ts=%d",
+                    self.symbol,
+                    closed_bar_ts,
                 )
         logger.info("Loop B stopped symbol=%s", self.symbol)
 
@@ -179,7 +193,17 @@ class AnalysisLoopB:
         return None
 
     def _fetch_context(self, bar_ts: int) -> tuple[list[CandleDict], list[CandleDict]]:
-        """Read both timeframes under the MT5 RLock and drop future bars."""
+        """Read both timeframes under the MT5 RLock and exclude forming bars.
+
+        bar_ts is the open-time of the last closed M15 bar.
+
+        M15 cutoff  = bar_ts           (include closed bar, exclude forming)
+        H4  cutoff  = last H4 open-time whose bar is fully closed at bar_ts
+                    = ((bar_ts + M15_SECONDS) // H4_SECONDS) * H4_SECONDS
+                      - H4_SECONDS
+        """
+        h4_cutoff = ((bar_ts + M15_SECONDS) // H4_SECONDS) * H4_SECONDS - H4_SECONDS
+
         # Request one extra bar: the exchange always returns the forming bar too.
         with self.exness_client.lock:
             m15_records = self.exness_client.fetch_recent_candles(
@@ -189,16 +213,18 @@ class AnalysisLoopB:
                 "H4", self.bar_lookback_h4 + 1
             )
 
-        cutoff = _iso_utc(bar_ts)
+        m15_cutoff_str = _iso_utc(bar_ts)
+        h4_cutoff_str = _iso_utc(h4_cutoff)
+
         m15_candles = [
             _to_candle_dict(candle)
             for candle in m15_records
-            if candle.timestamp_utc <= cutoff
+            if candle.timestamp_utc <= m15_cutoff_str
         ][-self.bar_lookback_m15 :]
         h4_candles = [
             _to_candle_dict(candle)
             for candle in h4_records
-            if candle.timestamp_utc <= cutoff
+            if candle.timestamp_utc <= h4_cutoff_str
         ][-self.bar_lookback_h4 :]
 
         if len(m15_candles) < self.bar_lookback_m15:
