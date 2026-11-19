@@ -35,85 +35,134 @@ Sistem beroperasi terus-menerus melalui tahapan pipeline deterministik untuk mem
 
 ### Diagram Alur Kerja & Arsitektur Sistem
 
-```text
-========================================================================================================================
-                                 AETERNA QUANT ENGINE — ALUR KERJA OPERASIONAL END-TO-END
-========================================================================================================================
+> **Diagram 1 dari 2 — Ingestion, Runtime Loop & Strategy Pool (Tahap 1–4)**
 
- [ Pakan Data Pasar ]
-   ├── MetaTrader 5 Exness (Aliran Tick Real-Time, M1, M15, H1, H4 OHLCV & Volume Tick)
-   ├── OANDA v20 REST API (Rasio Sentimen Posisi & Distribusi Buku Pesanan Ritel)
-   └── FRED Macro API (Imbal Hasil Riil US TIPS 10Y & Proxy Indeks DXY)
-         │
-         ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ TAHAP 1: INGESTION MULTI-SUMBER & MESIN PENYIMPANAN                                                                │
- │ • Tabel Kanonik SQLite WAL: market_candles, bar_cursors, signal_observations, news_telemetry                       │
- │ • Cache Makro Offline 24 Jam dengan Fallback Anggun & Degradasi Zero-Crash                                         │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ TAHAP 2: RUNTIME LOOP A — MESIN FAST-TICK & PENGAWAL SPREAD REAL-TIME (Kadensi: 2.0s)                              │
- │ • Poller Tick Non-Blocking Asinkron via asyncio.to_thread di bawah MT5 threading.RLock()                          │
- │ • Baseline Spread EWMA Online: S_base(t) = 0.08 * S(t) + 0.92 * S_base(t-1)                                       │
- │ • Gerbang Spread Z-Score Dinamis: Z(t) = (S(t) - S_base(t)) / σ_S(t) (Status PAUSED jika Z >= 3.0)                │
- │ • Jendela Blackout Kalender Makro Dampak Tinggi: T - 10 Menit Sebelum Rilis                                        │
- │ • Deteksi Batas Penutupan Bar M15 Deterministik ──► Memicu m15_event untuk Membangunkan Loop B                    │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │ Status == NORMAL saja (PAUSED / PRE_NEWS menghalangi sinyal)
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ TAHAP 3: RUNTIME LOOP B — ANALISIS STRUKTURAL M15 & KLASIFIKASI REZIM KRONOS (Event-Driven)                       │
- │ • Pelacakan Kursor Replay-Safe via bar_cursors (Proteksi Anti-Replay saat Sistem Restart)                          │
- │ • Jendela Konteks: Tepat 512 Bar Penutupan H4 (~3.5–4 Bulan Data, Gerbang Monotonik Kronologis O(N))              │
- │ • Normalisasi: Zero-Leakage RollingFeatureScaler (max(X.timestamp) < y.timestamp)                                 │
- │ • Inferensi Kronos ONNX Runtime CPU (Latensi <5ms, Batasan Mutlak Zero-LLM di Produksi)                            │
- │ • Gerbang Probabilitas Rezim: BULLISH_TRENDING / BEARISH_TRENDING / RANGING (Keyakinan >= 0.60)                   │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ TAHAP 4: KUMPULAN STRATEGI MULTI-TIMEFRAME & GENERASI KANDIDAT SINYAL                                              │
- │ • Strategi 1: Volatility Breakout (M15 Donchian 20 + Ekspansi Volatilitas ATR > 1.2x MA)                           │
- │ • Strategi 2: Positioning Contrarian (Crowding Sentimen Ritel Buku Pesanan OANDA > 75%)                            │
- │ • Strategi 3: Makro Antar-Pasar (Pergeseran Delta 20-Hari Imbal Hasil US TIPS 10Y & Tren DXY)                      │
- │ • Strategi 4: Adaptive Mean-Reversion (Khusus Rezim Terkonfirmasi RANGING + RSI(14) + Volatility Band)             │
- │ • Filter Wajib Reward-to-Risk: Rasio R:R >= 2.0 Wajib Terpenuhi (Tolak setup di bawah 2.0)                         │
- │ • Persistensi Idempoten: Menulis Kandidat SignalObservationRecord ke SQLite WAL                                    │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                   ┌──────────────────────┴──────────────────────┐
-                   │ (Jalur Jurnal Virtual Internal)             │ (Jalur Eksekusi Riil — Terkunci GATE-M4 & GATE-M5)
-                   ▼                                             ▼
- ┌──────────────────────────────────────────────┐ ┌──────────────────────────────────────────────────────────────────┐
- │ TAHAP 7B: VIRTUAL SIGNAL TRACKER (Loop 2.0s) │ │ TAHAP 5: MASTER RISK GATE & SIZING (Go Watchdog 127.0.0.1:20129) │
- │ • Jurnal Forward-Testing Murni ($0 Risiko)   │ │ • Daemon Go Out-of-Process (Isolasi SQLite WAL Read-Only Murni) │
- │ • Evaluasi Mark-to-Market Real-Tick          │ │ • Invarian: Ekuitas > 0, Daily Loss < 2%, DD < 10%              │
- │ • Lapis Exit 1: Fixed SL/TP + Real Spread    │ │ • Batas Konkurensi: Maks 1 Posisi Terbuka, Maks 5 Trade/Hari     │
- │ • Lapis Exit 2: Trailing Breakeven di +1.0R  │ │ • Graduated Liquidity Sizing: Normal 100% (0.5%), Tipis 50%      │
- │ • Lapis Exit 3: Min-Lot 0.01 Skip Handled    │ │ • Emergency Deadman Switch & Eskalasi Terminasi SIGKILL         │
- │ • Lapis Exit 4: Time Invalidation (8 M15 /2j)│ └────────────────────────────────┬─────────────────────────────────┘
- │ • Lapis Exit 5: Regime Invalidation (H4 Flip)│                                  │
- │ • Bank Rollover: Force Exit 15m Sebelum Break│                                  ▼
- │ • Pelacakan R Bersih Terealisasi             │ ┌──────────────────────────────────────────────────────────────────┐
- └──────────────────────┬───────────────────────┘ │ TAHAP 6: EKSEKUSI BROKER BRIDGE (Exness MetaTrader 5)            │
-                        │                         │ • Eksekusi Aman-Thread via Mutex threading.RLock()               │
-                        │                         │ • Wajib Server-Side SL (1.5*ATR) & TP (Naked Order Dilarang)     │
-                        │                         │ • Mode Eksekusi Dinamis: Fill-Or-Kill (FOK) / IOC                │
-                        │                         │ • Default Terkunci Mode SIGNAL_ONLY Hingga Izin Operator         │
-                        │                         └────────────────────────────────┬─────────────────────────────────┘
-                        │                                                          │
-                        └──────────────────────────┬───────────────────────────────┘
-                                                   │
-                                                   ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ TAHAP 8: ORKESTRASI & OPERASIONAL TELEGRAM GANDA                                                                   │
- │ • RuntimeService Orchestrator: Python 3.12 asyncio.TaskGroup (Konkurensi Bersih & Penutupan Anggun Terkoordinasi)  │
- │ • Stream 1: Dashboard Observasi Admin Signal-Only (Kemurnian Leksikal Ketat: Zero Lot, Ekuitas, Tiket, Perintah)  │
- │ • Stream 2: Bot Control Panel (Whitelist TELEGRAM_ADMIN_ID, Nonce Sekali Pakai 60s, Konfirmasi 2-Langkah 15s)     │
- │ • Stream 3: Pelapor Metrik Sesi Harian (Net P&L, Rasio Win Terealisasi, Max Drawdown, Verifikasi Audit Ledger)     │
- └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    MT5["MetaTrader 5 Exness\nTick Stream Real-Time + M1/M15/H1/H4 OHLCV"]
+    OANDA["OANDA v20 REST API\nSentimen Ritel & Distribusi Buku Pesanan"]
+    FRED["FRED Macro API\nUS TIPS 10Y Real Yield & Proxy Indeks DXY"]
+    DB[("SQLite WAL\nmarket_candles · bar_cursors\nsignal_observations · news_telemetry")]
+
+    subgraph S1["Tahap 1 — Ingestion Multi-Sumber & Mesin Penyimpanan"]
+        MT5 --> DB
+        OANDA --> DB
+        FRED --> DB
+        CACHE["Cache Makro Offline 24 Jam\nFallback Anggun & Degradasi Zero-Crash"]
+        FRED --> CACHE --> DB
+    end
+
+    subgraph S2["Tahap 2 — Runtime Loop A: Mesin Fast-Tick & Pengawal Spread (Kadensi 2.0s)"]
+        TICK["asyncio.to_thread Tick Poller\nMT5 threading.RLock — Non-Blocking"]
+        EWMA["Baseline Spread EWMA Online α=0.08\nS_base = 0.08·S + 0.92·S_base_prev"]
+        ZSCORE["Gerbang Z-Score Spread Dinamis\nZ = (S - S_base) / σ_S\nTrigger PAUSED jika Z ≥ 3.0"]
+        NEWS["Blackout Berita Dampak Tinggi\nJendela T-10 Menit Sebelum Rilis"]
+        STCHECK{"Status Sistem\n== NORMAL?"}
+        BARCLOSE{"Bar M15\nTertutup?"}
+
+        TICK --> EWMA --> ZSCORE --> STCHECK
+        NEWS --> STCHECK
+        TICK --> BARCLOSE
+    end
+
+    PAUSED["Status = PAUSED / PRE_NEWS\nSeluruh Sinyal Entry Diblokir"]
+    STCHECK -- "TIDAK — Spread Spike / Berita" --> PAUSED
+
+    subgraph S3["Tahap 3 — Runtime Loop B: Analisis Struktural M15 & Klasifikasi Rezim Kronos (Event-Driven)"]
+        M15EVT["m15_event Dipicu\nKursor Replay-Safe via bar_cursors"]
+        H4CTX["512 Bar H4 Penutup\n~3.5–4 Bulan Konteks · Gerbang Monotonik O(N)"]
+        SCALER["Zero-Leakage RollingFeatureScaler\nmax(X.ts) < y.ts — Tanpa Lookahead Bias"]
+        KRONOS["Kronos ONNX Runtime CPU\nDeterministik < 5ms · Batas Zero-LLM Produksi"]
+        REGIME["Rezim Terklasifikasi\nBULLISH_TRENDING / BEARISH_TRENDING\nRANGING — Keyakinan ≥ 0.60"]
+    end
+
+    subgraph S4["Tahap 4 — Kumpulan Strategi Multi-Timeframe & Generasi Sinyal"]
+        ST1["Strategi 1: Volatility Breakout\nM15 Donchian 20 + Ekspansi ATR > 1.2x MA"]
+        ST2["Strategi 2: Positioning Contrarian\nCrowding Ritel OANDA > 75% Skew"]
+        ST3["Strategi 3: Makro Antar-Pasar\nDelta 20-Hari US TIPS 10Y + Tren DXY"]
+        ST4["Strategi 4: Adaptive Mean-Reversion\nRANGING Terkonfirmasi + RSI(14) + Volatility Band"]
+        RRGATE["Gerbang Wajib R:R ≥ 2.0\nTolak Semua Setup Di Bawah 2.0"]
+        OBSEMIT["SignalObservationRecord Idempoten\nDitulis ke SQLite WAL"]
+    end
+
+    DB --> S2
+    BARCLOSE -- "YA" --> M15EVT
+    STCHECK -- "YA" --> S3
+    M15EVT --> H4CTX --> SCALER --> KRONOS --> REGIME --> S4
+    ST1 --> RRGATE
+    ST2 --> RRGATE
+    ST3 --> RRGATE
+    ST4 --> RRGATE
+    RRGATE --> OBSEMIT
+```
+
+> **Diagram 2 dari 2 — Virtual Tracker, Risk Gate, Eksekusi Broker & Orkestrasi (Tahap 5–8)**
+
+```mermaid
+flowchart TD
+    OBSEMIT["SignalObservationRecord\ndi SQLite WAL"]
+
+    subgraph S5["Tahap 5 — Virtual Signal Tracker (Loop Mark-to-Market 2.0s)"]
+        VPOLL["Poll Observasi Sinyal Terbuka\nZero Modal Riil — Jurnal Forward-Test Murni"]
+        EXIT1["L1: Fixed SL/TP + Biaya Real Bid/Ask Spread"]
+        EXIT2["L2: Trailing Breakeven di +1.0R\nBuffer Spread Dinamis Diterapkan"]
+        EXIT3["L3: Penanganan Skip Min-Lot 0.01"]
+        EXIT4["L4: Time Invalidation — 8 Bar M15 / 7200s"]
+        EXIT5["L5: Invalidasi Flip Rezim H4"]
+        ROLLOVER["Hard Rollover: Force Exit 15m Sebelum Bank Break\n20:44 UTC Musim Panas / 21:44 UTC Musim Dingin"]
+        VJRNL["Update Outcome Observasi\nNet R Terealisasi Deterministik Dicatat"]
+    end
+
+    subgraph S6["Tahap 6 — Master Risk Gate (Go Watchdog — 127.0.0.1:20129)"]
+        WDOG["Supervisor Daemon Go Independen\nIsolasi SQLite WAL Read-Only — Out-of-Process"]
+        RC1["Ekuitas > 0"]
+        RC2["Daily Loss < 2.0%"]
+        RC3["Max Drawdown < 10.0%"]
+        RC4["Posisi Terbuka == 0"]
+        RC5["Trade Hari Ini < 5"]
+        SIZING["Graduated Liquidity Sizing\nNormal Z ≥ -2.0 → 100% (0.5% risiko)\nTipis Z < -2.0 → 50% lot\nRollover / Libur → 0% Diblokir"]
+        KILL["Emergency Deadman Switch\nEskalasi Multi-Tahap SIGKILL\nLockfile Persisten saat Pelanggaran"]
+    end
+
+    subgraph S7["Tahap 7 — Eksekusi Broker Bridge (Exness MetaTrader 5)"]
+        RLOCK["ExnessBrokerBridge\nthreading.RLock Mutual Exclusion"]
+        SLTP["Wajib Server-Side SL (1.5×ATR) + TP\nNaked Order Dilarang Keras"]
+        FILLMODE["Pemilihan Mode Fill Dinamis\nFill-Or-Kill (FOK) / IOC per Kapabilitas Broker"]
+        SIGONLY["Default Terkunci SIGNAL_ONLY\nDibuka Oleh Operator — GATE-M4 & GATE-M5 Cleared"]
+    end
+
+    subgraph S8["Tahap 8 — Orkestrasi & Operasional Telegram Ganda"]
+        TASKGRP["RuntimeService — asyncio.TaskGroup\nLoop A + Loop B + Tracker + Publisher Konkuren"]
+        DASH["Stream 1: Dashboard Observasi Admin Signal-Only\nKemurnian Leksikal Ketat — Zero Lot/Ekuitas/Tiket/Perintah"]
+        CTRL["Stream 2: Bot Control Panel Admin\nWhitelist TELEGRAM_ADMIN_ID\nNonce 60s Sekali Pakai · Konfirmasi 2-Langkah 15s"]
+        REPORT["Stream 3: Pelapor Metrik Sesi Harian\nNet PnL · Rasio Win · Max Drawdown · Audit Ledger"]
+    end
+
+    OBSEMIT --> VPOLL
+    VPOLL --> EXIT1 --> EXIT2 --> EXIT3 --> EXIT4 --> EXIT5 --> ROLLOVER --> VJRNL
+    OBSEMIT --> WDOG
+    WDOG --> RC1
+    WDOG --> RC2
+    WDOG --> RC3
+    WDOG --> RC4
+    WDOG --> RC5
+    RC1 --> SIZING
+    RC2 --> SIZING
+    RC3 --> SIZING
+    RC4 --> SIZING
+    RC5 --> SIZING
+    RC1 -- "Pelanggaran" --> KILL
+    RC2 -- "Pelanggaran" --> KILL
+    RC3 -- "Pelanggaran" --> KILL
+    RC4 -- "Pelanggaran" --> KILL
+    RC5 -- "Pelanggaran" --> KILL
+    SIZING --> RLOCK
+    RLOCK --> SLTP --> FILLMODE --> SIGONLY
+    VJRNL --> TASKGRP
+    SIGONLY --> TASKGRP
+    TASKGRP --> DASH
+    TASKGRP --> CTRL
+    TASKGRP --> REPORT
 ```
 
 ### Penjelasan Rinci Tahapan Alur Kerja

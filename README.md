@@ -35,85 +35,134 @@ The system operates continuously across eight deterministic pipeline stages, ens
 
 ### System Architecture & Operational Workflow
 
-```text
-========================================================================================================================
-                                 AETERNA QUANT ENGINE — END-TO-END OPERATIONAL WORKFLOW
-========================================================================================================================
+> **Diagram 1 of 2 — Ingestion, Runtime Loops & Strategy Pool (Stages 1–4)**
 
- [ Market Data Feeds ]
-   ├── Exness MetaTrader 5 (Real-Time Tick Stream, M1, M15, H1, H4 OHLCV & Tick Volume)
-   ├── OANDA v20 REST API (Retail Positioning & Order Book Distribution Sentiment Skew)
-   └── FRED Macro API (US TIPS 10Y Real Yield & Trade-Weighted DXY Index Proxy)
-         │
-         ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ STAGE 1: MULTI-SOURCE INGESTION & STORAGE ENGINE                                                                   │
- │ • Canonical SQLite WAL Tables: market_candles, bar_cursors, signal_observations, news_telemetry                    │
- │ • 24-Hour Offline Macro Cache with Graceful Fallback & Zero-Crash Degradation                                     │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ STAGE 2: RUNTIME LOOP A — FAST-TICK ENGINE & REAL-TIME SPREAD GUARD (Cadence: 2.0s)                                │
- │ • Non-Blocking Asynchronous Tick Poller via asyncio.to_thread under MT5 threading.RLock()                         │
- │ • Online EWMA Spread Baseline: S_base(t) = 0.08 * S(t) + 0.92 * S_base(t-1)                                        │
- │ • Dynamic Spread Z-Score Gate: Z(t) = (S(t) - S_base(t)) / σ_S(t) (Trigger PAUSED if Z >= 3.0)                    │
- │ • High-Impact Macro Calendar Blackout Guard: T - 10 Minutes Before Release Window                                  │
- │ • Deterministic M15 Bar-Close Boundary Detection ──► Emits m15_event to Wake Loop B                                 │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │ State == NORMAL only (PAUSED / PRE_NEWS inhibits entry)
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ STAGE 3: RUNTIME LOOP B — M15 STRUCTURAL ANALYSIS & KRONOS REGIME CLASSIFICATION (Event-Driven)                   │
- │ • Replay-Safe Cursor Tracking via bar_cursors Table (Anti-Replay Protection upon System Restart)                   │
- │ • Context Window: Exactly 512 Closed H4 Bars (~3.5–4 Months Context, O(N) Chronological Monotonic Gate)            │
- │ • Normalization: Zero-Leakage RollingFeatureScaler (max(X.timestamp) < y.timestamp)                                │
- │ • Kronos ONNX Runtime CPU Inference (<5ms Latency, Zero-LLM Production Boundary)                                  │
- │ • Discrete Regime Probability Gate: BULLISH_TRENDING / BEARISH_TRENDING / RANGING (Confidence >= 0.60)             │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ STAGE 4: MULTI-TIMEFRAME STRATEGY POOL & CANDIDATE SIGNAL GENERATION                                               │
- │ • Strategy 1: Volatility Breakout (M15 Donchian 20 + ATR Volatility Expansion > 1.2x MA)                           │
- │ • Strategy 2: Positioning Contrarian (OANDA Order Book Retail Crowding > 75% Sentiment Skew)                       │
- │ • Strategy 3: Macro Intermarket (20-Day Delta Shift in US TIPS 10Y Yield & DXY Trend)                              │
- │ • Strategy 4: Adaptive Mean-Reversion (Activated strictly on Confirmed RANGING Regime + RSI(14) + Volatility Band) │
- │ • Mandatory Reward-to-Risk Filter: R:R Ratio >= 2.0 Required (Rejects sub-2.0 setups)                              │
- │ • Idempotent Persistence: Writes Candidate SignalObservationRecord to SQLite WAL                                  │
- └────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┘
-                                          │
-                   ┌──────────────────────┴──────────────────────┐
-                   │ (Internal Virtual Journal Path)             │ (Live Execution Path — Gated by GATE-M4 & GATE-M5)
-                   ▼                                             ▼
- ┌──────────────────────────────────────────────┐ ┌──────────────────────────────────────────────────────────────────┐
- │ STAGE 7B: VIRTUAL SIGNAL TRACKER (2.0s Loop) │ │ STAGE 5: MASTER RISK GATE & SIZING (Go Watchdog 127.0.0.1:20129) │
- │ • Pure Forward-Testing Journal ($0 Risk)     │ │ • Out-of-Process Go Daemon (Pure Read-Only SQLite WAL Isolation)│
- │ • Real-Tick Mark-to-Market Evaluation        │ │ • Invariant Checks: Equity > 0, Daily Loss < 2%, DD < 10%        │
- │ • Exit Layer 1: Fixed SL/TP with Real Spread │ │ • Concurrency Limits: Max 1 Open Position, Max 5 Trades/Day      │
- │ • Exit Layer 2: Trailing Breakeven at +1.0R  │ │ • Graduated Liquidity Sizing: Normal 100% (0.5%), Thin 50%       │
- │ • Exit Layer 3: Min-Lot 0.01 Skip Handled    │ │ • Emergency Deadman Switch & Multi-Stage SIGKILL Escalation      │
- │ • Exit Layer 4: Time Invalidation (8 M15 /2h)│ └────────────────────────────────┬─────────────────────────────────┘
- │ • Exit Layer 5: H4 Regime Flip Invalidation  │                                  │
- │ • Bank Rollover: Force Exit 15m Before Break │                                  ▼
- │ • Deterministic Net Realized R Tracking      │ ┌──────────────────────────────────────────────────────────────────┐
- └──────────────────────┬───────────────────────┘ │ STAGE 6: BROKER BRIDGE EXECUTION (Exness MetaTrader 5)           │
-                        │                         │ • Thread-Safe Execution via threading.RLock() Mutual Exclusion   │
-                        │                         │ • Mandatory Server-Side SL (1.5*ATR) & TP (Naked Orders Prohibited│
-                        │                         │ • Dynamic Order Execution Mode: Fill-Or-Kill (FOK) / IOC         │
-                        │                         │ • Locked by Default in SIGNAL_ONLY Mode Until Operator Clear     │
-                        │                         └────────────────────────────────┬─────────────────────────────────┘
-                        │                                                          │
-                        └──────────────────────────┬───────────────────────────────┘
-                                                   │
-                                                   ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ STAGE 8: ORCHESTRATION & DUAL-STREAM TELEGRAM OPERATIONS                                                           │
- │ • RuntimeService Orchestrator: Python 3.12 asyncio.TaskGroup (Clean Concurrency & Graceful Coordinated Shutdown)  │
- │ • Stream 1: Signal-Only Admin Observation Dashboard (Strict Lexical Purity: Zero Lot, Equity, Ticket, Imperatives)│
- │ • Stream 2: Control Panel Bot (Whitelisted TELEGRAM_ADMIN_ID, 60s Single-Use Nonces, 15s Two-Step Confirmation)   │
- │ • Stream 3: Daily Session Metrics Reporter (Net P&L, Realized Win Ratio, Max Drawdown, Audit Ledger Verification)  │
- └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    MT5["MetaTrader 5 Exness\nTick Stream + M1/M15/H1/H4 OHLCV"]
+    OANDA["OANDA v20 REST API\nRetail Positioning & Order Book Skew"]
+    FRED["FRED Macro API\nUS TIPS 10Y Real Yield & DXY Proxy"]
+    DB[("SQLite WAL\nmarket_candles · bar_cursors\nsignal_observations · news_telemetry")]
+
+    subgraph S1["Stage 1 — Multi-Source Ingestion & Storage"]
+        MT5 --> DB
+        OANDA --> DB
+        FRED --> DB
+        CACHE["24h Offline Macro Cache\nGraceful Fallback & Zero-Crash Degradation"]
+        FRED --> CACHE --> DB
+    end
+
+    subgraph S2["Stage 2 — Runtime Loop A: Fast-Tick Engine & Spread Guard (2.0s cadence)"]
+        TICK["asyncio.to_thread Tick Poller\nMT5 threading.RLock — Non-Blocking"]
+        EWMA["Online EWMA Spread Baseline α=0.08\nS_base = 0.08·S + 0.92·S_base_prev"]
+        ZSCORE["Spread Z-Score Gate\nZ = (S - S_base) / σ_S\nTrigger PAUSED if Z ≥ 3.0"]
+        NEWS["High-Impact News Blackout\nT-10min Pre-Release Window"]
+        STCHECK{"System State\n== NORMAL?"}
+        BARCLOSE{"M15 Bar\nClosed?"}
+
+        TICK --> EWMA --> ZSCORE --> STCHECK
+        NEWS --> STCHECK
+        TICK --> BARCLOSE
+    end
+
+    PAUSED["State = PAUSED / PRE_NEWS\nAll Entry Signals Inhibited"]
+    STCHECK -- "NO — Spread Spike / News" --> PAUSED
+
+    subgraph S3["Stage 3 — Runtime Loop B: M15 Structural Analysis & Kronos Regime (Event-Driven)"]
+        M15EVT["m15_event Triggered\nReplay-Safe Cursor via bar_cursors"]
+        H4CTX["512 Closed H4 Bars Context\n~3.5–4 Months · O(N) Monotonic Gate"]
+        SCALER["Zero-Leakage RollingFeatureScaler\nmax(X.ts) < y.ts — No Lookahead Bias"]
+        KRONOS["Kronos ONNX Runtime CPU\nDeterministic < 5ms · Zero-LLM Boundary"]
+        REGIME["Regime Classified\nBULLISH_TRENDING / BEARISH_TRENDING\nRANGING — Confidence ≥ 0.60"]
+    end
+
+    subgraph S4["Stage 4 — Multi-Timeframe Strategy Pool & Signal Generation"]
+        ST1["Strategy 1: Volatility Breakout\nM15 Donchian 20 + ATR Expansion > 1.2x MA"]
+        ST2["Strategy 2: Positioning Contrarian\nOANDA Retail Crowding > 75% Skew"]
+        ST3["Strategy 3: Macro Intermarket\n20-Day Delta US TIPS 10Y + DXY Trend"]
+        ST4["Strategy 4: Adaptive Mean-Reversion\nConfirmed RANGING + RSI(14) + Volatility Band"]
+        RRGATE["R:R Ratio ≥ 2.0 Mandatory Gate\nRejects All Sub-2.0 Setups"]
+        OBSEMIT["Idempotent SignalObservationRecord\nWritten to SQLite WAL"]
+    end
+
+    DB --> S2
+    BARCLOSE -- "YES" --> M15EVT
+    STCHECK -- "YES" --> S3
+    M15EVT --> H4CTX --> SCALER --> KRONOS --> REGIME --> S4
+    ST1 --> RRGATE
+    ST2 --> RRGATE
+    ST3 --> RRGATE
+    ST4 --> RRGATE
+    RRGATE --> OBSEMIT
+```
+
+> **Diagram 2 of 2 — Virtual Tracker, Risk Gate, Broker Execution & Orchestration (Stages 5–8)**
+
+```mermaid
+flowchart TD
+    OBSEMIT["SignalObservationRecord\nin SQLite WAL"]
+
+    subgraph S5["Stage 5 — Virtual Signal Tracker (2.0s Mark-to-Market Loop)"]
+        VPOLL["Poll Open Signal Observations\nZero Capital Risk — Pure Forward-Test Journal"]
+        EXIT1["L1: Fixed SL/TP w/ Real Bid/Ask Spread Cost"]
+        EXIT2["L2: Trailing Breakeven at +1.0R\nDynamic Spread Buffer Applied"]
+        EXIT3["L3: Min-Lot 0.01 Partial Skip Handling"]
+        EXIT4["L4: Time Invalidation — 8 M15 Bars / 7200s"]
+        EXIT5["L5: H4 Regime Flip Invalidation"]
+        ROLLOVER["Hard Rollover: Force Exit 15m Before Bank Break\n20:44 UTC Summer / 21:44 UTC Winter"]
+        VJRNL["Update Observation Outcome\nDeterministic Net Realized R Recorded"]
+    end
+
+    subgraph S6["Stage 6 — Master Risk Gate (Go Watchdog — 127.0.0.1:20129)"]
+        WDOG["Independent Go Daemon Supervisor\nRead-Only SQLite WAL Isolation — Out-of-Process"]
+        RC1["Equity > 0"]
+        RC2["Daily Loss < 2.0%"]
+        RC3["Max Drawdown < 10.0%"]
+        RC4["Open Positions == 0"]
+        RC5["Trades Today < 5"]
+        SIZING["Graduated Liquidity Sizing\nNormal Z ≥ -2.0 → 100% (0.5% risk)\nThin Z < -2.0 → 50% lot\nRollover / Holiday → 0% Blocked"]
+        KILL["Emergency Deadman Switch\nMulti-Stage SIGKILL Escalation\nPersistent Lockfile on Breach"]
+    end
+
+    subgraph S7["Stage 7 — Broker Bridge Execution (Exness MetaTrader 5)"]
+        RLOCK["ExnessBrokerBridge\nthreading.RLock Mutual Exclusion"]
+        SLTP["Mandatory Server-Side SL (1.5×ATR) + TP\nNaked Orders Strictly Prohibited"]
+        FILLMODE["Dynamic Fill Mode Selection\nFill-Or-Kill (FOK) / IOC per Broker Capability"]
+        SIGONLY["SIGNAL_ONLY Lock Default\nUnlocked by Operator — GATE-M4 & GATE-M5 Cleared"]
+    end
+
+    subgraph S8["Stage 8 — Orchestration & Dual-Stream Telegram Operations"]
+        TASKGRP["RuntimeService — asyncio.TaskGroup\nLoop A + Loop B + Tracker + Publisher Concurrent"]
+        DASH["Stream 1: Signal-Only Admin Dashboard\nStrict Lexical Purity — Zero Lot/Equity/Ticket/Imperatives"]
+        CTRL["Stream 2: Admin Control Panel\nWhitelisted TELEGRAM_ADMIN_ID\n60s Single-Use Nonces · 15s Two-Step Confirm"]
+        REPORT["Stream 3: Daily Session Metrics Reporter\nNet PnL · Win Ratio · Max Drawdown · Audit Ledger"]
+    end
+
+    OBSEMIT --> VPOLL
+    VPOLL --> EXIT1 --> EXIT2 --> EXIT3 --> EXIT4 --> EXIT5 --> ROLLOVER --> VJRNL
+    OBSEMIT --> WDOG
+    WDOG --> RC1
+    WDOG --> RC2
+    WDOG --> RC3
+    WDOG --> RC4
+    WDOG --> RC5
+    RC1 --> SIZING
+    RC2 --> SIZING
+    RC3 --> SIZING
+    RC4 --> SIZING
+    RC5 --> SIZING
+    RC1 -- "Breach" --> KILL
+    RC2 -- "Breach" --> KILL
+    RC3 -- "Breach" --> KILL
+    RC4 -- "Breach" --> KILL
+    RC5 -- "Breach" --> KILL
+    SIZING --> RLOCK
+    RLOCK --> SLTP --> FILLMODE --> SIGONLY
+    VJRNL --> TASKGRP
+    SIGONLY --> TASKGRP
+    TASKGRP --> DASH
+    TASKGRP --> CTRL
+    TASKGRP --> REPORT
 ```
 
 ### Detailed Workflow Stages
