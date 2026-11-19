@@ -129,12 +129,37 @@ def test_virtual_tracker_time_invalidation_after_eight_m15_bars(
     assert (state, exit_reason) == ("CLOSED_TIME", "time_invalidation")
 
 
+def test_virtual_tracker_time_invalidation_boundary(tmp_path: Path) -> None:
+    for elapsed, expected_state in ((7199, "OPEN"), (7200, "CLOSED_TIME")):
+        case_path = tmp_path / str(elapsed)
+        case_path.mkdir()
+        db = _db(case_path)
+        signal = _signal()
+
+        assert _mark(db, signal, _tick(2750.2, 2750.4, BAR_TS + elapsed)) is (
+            elapsed == 7200
+        )
+
+        state, _, _ = _read(db, signal.signal_id)
+        assert state == expected_state
+
+
 def test_virtual_tracker_regime_flip_forces_exit(tmp_path: Path) -> None:
     """A bearish H4 regime invalidates a live long immediately."""
     db = _db(tmp_path)
     signal = _signal()
 
     assert _mark(db, signal, _tick(2750.2, 2750.4), "TRENDING_BEARISH") is True
+
+    state, _, exit_reason = _read(db, signal.signal_id)
+    assert (state, exit_reason) == ("CLOSED_REGIME", "regime_invalidation")
+
+
+def test_virtual_tracker_sell_regime_flip_forces_exit(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    signal = _signal(order_type="SELL")
+
+    assert _mark(db, signal, _tick(2749.8, 2750.0), "TRENDING_BULLISH") is True
 
     state, _, exit_reason = _read(db, signal.signal_id)
     assert (state, exit_reason) == ("CLOSED_REGIME", "regime_invalidation")
@@ -163,6 +188,57 @@ def test_virtual_tracker_forces_exit_inside_rollover_buffer(tmp_path: Path) -> N
 
     state, _, exit_reason = _read(db, signal.signal_id)
     assert (state, exit_reason) == ("CLOSED_ROLLOVER", "pre_rollover_force")
+
+
+def test_virtual_tracker_rollover_outside_buffer_does_not_close(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    timestamp = ROLLOVER_TS - 1800
+    signal = _signal(bar_ts=timestamp - 300)
+
+    assert _mark(db, signal, _tick(2750.2, 2750.4, timestamp)) is False
+
+    state, _, exit_reason = _read(db, signal.signal_id)
+    assert (state, exit_reason) == ("OPEN", None)
+
+
+def test_virtual_tracker_arms_be_at_threshold(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    signal = _signal()
+
+    assert _mark(db, signal, _tick(2753.0, 2753.0)) is True
+
+    assert _read(db, signal.signal_id) == ("BE_ARMED", 0.10, None)
+
+
+def test_virtual_tracker_does_not_arm_be_below_threshold(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    signal = _signal()
+
+    assert _mark(db, signal, _tick(2752.98, 2752.98)) is True
+
+    assert _read(db, signal.signal_id) == ("PARTIAL_SKIPPED_MIN_LOT", 0.0, None)
+
+
+def test_virtual_tracker_closes_be_armed_at_floor(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    signal = dataclasses.replace(_signal(), state="BE_ARMED", r_realized_net=0.10)
+
+    assert _mark(db, signal, _tick(2750.2, 2750.2)) is True
+
+    assert _read(db, signal.signal_id) == ("CLOSED_TRAILING", 0.10, "trailing_hit")
+
+
+def test_virtual_tracker_be_armed_does_not_regress_to_running(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    signal = dataclasses.replace(_signal(), state="BE_ARMED", r_realized_net=0.10)
+
+    assert _mark(db, signal, _tick(2752.4, 2752.4)) is False
+
+    assert _read(db, signal.signal_id) == ("BE_ARMED", 0.10, None)
 
 
 def test_virtual_tracker_rejects_zero_risk_distance(tmp_path: Path) -> None:
