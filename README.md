@@ -33,128 +33,136 @@ The engine strictly enforces a **Zero-LLM Live Execution Boundary**: Large Langu
 
 The system operates continuously across eight deterministic pipeline stages, ensuring comprehensive verification before any capital is committed to the market:
 
-### System Architecture & Operational Flowchart
+### System Architecture & Operational Workflow
 
-> Flowchart syntax powered by [Pele](https://pele.run/) (ultra-fast, native CSS-themed diagram renderer).
+> **Diagram 1 of 2 — Ingestion, Runtime Loops & Strategy Pool (Stages 1–4)**
 
-```pele
+```mermaid
 flowchart TD
-    subgraph S1["Stage 1: Multi-Source Market Ingestion"]
-        MT5["MetaTrader 5 Exness<br/>(Tick Stream, M1, M15, H1, H4 OHLCV)"]
-        OANDA["OANDA v20 REST API<br/>(Retail Sentiment & Book Skew)"]
-        FRED["FRED API Macro Feed<br/>(US TIPS 10Y Yield & DXY Proxy)"]
-        SQLITE[("Canonical SQLite WAL Tables<br/>market_candles, bar_cursors,<br/>signal_observations, news_telemetry")]
-        MT5 --> SQLITE
-        OANDA --> SQLITE
-        FRED --> SQLITE
+    MT5["MetaTrader 5 Exness\nTick Stream + M1/M15/H1/H4 OHLCV"]
+    OANDA["OANDA v20 REST API\nRetail Positioning & Order Book Skew"]
+    FRED["FRED Macro API\nUS TIPS 10Y Real Yield & DXY Proxy"]
+    DB[("SQLite WAL\nmarket_candles · bar_cursors\nsignal_observations · news_telemetry")]
+
+    subgraph S1["Stage 1 — Multi-Source Ingestion & Storage"]
+        MT5 --> DB
+        OANDA --> DB
+        FRED --> DB
+        CACHE["24h Offline Macro Cache\nGraceful Fallback & Zero-Crash Degradation"]
+        FRED --> CACHE --> DB
     end
 
-    subgraph S2["Stage 2: Loop A (Fast-Tick 2s Engine & Spread Guard)"]
-        TICK_POLL["2.0s Non-Blocking Tick Poller<br/>(asyncio.to_thread under MT5 RLock)"]
-        EWMA["Online EWMA Spread Baseline (α=0.08)<br/>Z-Score = (Spread - Baseline) / σ"]
-        NEWS_CAL["High-Impact News Blackout Window<br/>(T - 10 Minutes Buffer)"]
-        STATE_IPC{"System State == NORMAL?"}
-        BAR_CLOSE{"M15 Bar Closed?"}
+    subgraph S2["Stage 2 — Runtime Loop A: Fast-Tick Engine & Spread Guard (2.0s cadence)"]
+        TICK["asyncio.to_thread Tick Poller\nMT5 threading.RLock — Non-Blocking"]
+        EWMA["Online EWMA Spread Baseline α=0.08\nS_base = 0.08·S + 0.92·S_base_prev"]
+        ZSCORE["Spread Z-Score Gate\nZ = (S - S_base) / σ_S\nTrigger PAUSED if Z ≥ 3.0"]
+        NEWS["High-Impact News Blackout\nT-10min Pre-Release Window"]
+        STCHECK{"System State\n== NORMAL?"}
+        BARCLOSE{"M15 Bar\nClosed?"}
 
-        TICK_POLL --> EWMA --> STATE_IPC
-        NEWS_CAL --> STATE_IPC
-        TICK_POLL --> BAR_CLOSE
-    end
-    SQLITE --> S2
-
-    BLOCK_PAUSE["State = PAUSED / RECOVERY<br/>Inhibit Entry Signals"]
-    STATE_IPC -- "NO (Spread Spike / News)" --> BLOCK_PAUSE
-
-    subgraph S3["Stage 3: Loop B (M15 Structural Analysis & Kronos Regime)"]
-        M15_EVT["m15_event Triggered<br/>(Replay-Safe Cursor Tracking)"]
-        CTX["512 Closed H4 Bars Context<br/>Zero-Leakage RollingFeatureScaler"]
-        KRONOS["Kronos ONNX Runtime CPU<br/>(Deterministic Latency <5ms, Zero-LLM)"]
-        REGIME["H4 Regime Classified:<br/>• BULLISH_TRENDING<br/>• BEARISH_TRENDING<br/>• RANGING (Conf ≥60%)"]
-        STRAT_GATE["Multi-Timeframe Strategy Pool<br/>Reward-to-Risk Ratio ≥ 2.0 Gate"]
-        OBS_EMIT["Emit SignalObservationRecord<br/>(Idempotent Write to SQLite)"]
-
-        BAR_CLOSE -- "YES" --> M15_EVT
-        M15_EVT --> CTX --> KRONOS --> REGIME --> STRAT_GATE --> OBS_EMIT
-    end
-    STATE_IPC -- "YES" --> S3
-
-    subgraph S4["Stage 4: Virtual Signal Tracker (Mark-to-Market 2s)"]
-        POLL_OBS["Poll Open Signal Observations<br/>(Zero Capital Risk / $0 Modal Riil)"]
-        EXIT_5L["Deterministic 5-Layer Exit Evaluation:<br/>• L1: Fixed SL/TP with Real Bid/Ask Spread Cost<br/>• L2: Dynamic Breakeven (+1.0R)<br/>• L3: Min-Lot 0.01 Partial Skip Handling<br/>• L4: Time Invalidation (8 M15 Bars / 7200s)<br/>• L5: Regime Invalidation (H4 Flip)<br/>• Rollover: Force Exit 15m Before Bank Break"]
-        UPDATE_JRNL["Update Observation Outcome & Realized Net R<br/>(Virtual Forward-Test Journal)"]
-
-        OBS_EMIT --> POLL_OBS --> EXIT_5L --> UPDATE_JRNL
+        TICK --> EWMA --> ZSCORE --> STCHECK
+        NEWS --> STCHECK
+        TICK --> BARCLOSE
     end
 
-    subgraph S5["Stage 5: Master Risk Gate (Independent Go Watchdog)"]
-        WATCHDOG["Independent Go Watchdog Supervisor<br/>(127.0.0.1:20129 / Read-Only SQLite WAL)"]
-        RISK_CHECK{"Pre-Order Limit Checks:<br/>• Account Equity > 0<br/>• Daily Loss < 2.0%<br/>• Max Drawdown < 10.0%<br/>• Open Positions == 0<br/>• Trades Today < 5"}
-        KILLSWITCH["Emergency Deadman & SIGKILL Escalation<br/>(Process Termination on Breach)"]
+    PAUSED["State = PAUSED / PRE_NEWS\nAll Entry Signals Inhibited"]
+    STCHECK -- "NO — Spread Spike / News" --> PAUSED
 
-        WATCHDOG --> RISK_CHECK
-        RISK_CHECK -- "Breach" --> KILLSWITCH
+    subgraph S3["Stage 3 — Runtime Loop B: M15 Structural Analysis & Kronos Regime (Event-Driven)"]
+        M15EVT["m15_event Triggered\nReplay-Safe Cursor via bar_cursors"]
+        H4CTX["512 Closed H4 Bars Context\n~3.5–4 Months · O(N) Monotonic Gate"]
+        SCALER["Zero-Leakage RollingFeatureScaler\nmax(X.ts) < y.ts — No Lookahead Bias"]
+        KRONOS["Kronos ONNX Runtime CPU\nDeterministic < 5ms · Zero-LLM Boundary"]
+        REGIME["Regime Classified\nBULLISH_TRENDING / BEARISH_TRENDING\nRANGING — Confidence ≥ 0.60"]
     end
 
-    subgraph S6["Stage 6: Orchestration & Admin Observation Dashboard"]
-        TASK_GROUP["RuntimeService (asyncio.TaskGroup)<br/>Concurrently Manages Loop A, Loop B, Tracker & Publisher"]
-        PURITY_CHECK["Observation Card Lexical Purity Filter<br/>(Strict Rejection of Lot, Equity, Ticket, Imperatives)"]
-        TELEGRAM_ADMIN["Telegram Admin-Only Dashboard<br/>(Whitelisted Admin ID, Silent Drop Non-Admin)"]
-
-        TASK_GROUP --> UPDATE_JRNL
-        UPDATE_JRNL --> PURITY_CHECK --> TELEGRAM_ADMIN
+    subgraph S4["Stage 4 — Multi-Timeframe Strategy Pool & Signal Generation"]
+        ST1["Strategy 1: Volatility Breakout\nM15 Donchian 20 + ATR Expansion > 1.2x MA"]
+        ST2["Strategy 2: Positioning Contrarian\nOANDA Retail Crowding > 75% Skew"]
+        ST3["Strategy 3: Macro Intermarket\n20-Day Delta US TIPS 10Y + DXY Trend"]
+        ST4["Strategy 4: Adaptive Mean-Reversion\nConfirmed RANGING + RSI(14) + Volatility Band"]
+        RRGATE["R:R Ratio ≥ 2.0 Mandatory Gate\nRejects All Sub-2.0 Setups"]
+        OBSEMIT["Idempotent SignalObservationRecord\nWritten to SQLite WAL"]
     end
+
+    DB --> S2
+    BARCLOSE -- "YES" --> M15EVT
+    STCHECK -- "YES" --> S3
+    M15EVT --> H4CTX --> SCALER --> KRONOS --> REGIME --> S4
+    ST1 --> RRGATE
+    ST2 --> RRGATE
+    ST3 --> RRGATE
+    ST4 --> RRGATE
+    RRGATE --> OBSEMIT
 ```
 
-```
-[ Market Data Feeds ] (Exness MT5 M1-H4 + OANDA v20 + FRED API Macro)
-         │
-         ▼
-[ Stage 1: Ingestion & Storage Engine ] ──► SQLite WAL Canonical Tables
-         │
-         ▼
-[ Stage 2: State Machine & News Filter ]
-  ├─ EWMA Spread Baseline (α=0.08) & Z-Score Gate
-  └─ FRED High-Impact Blackout Window (T - 10 min)
-         │ (State == NORMAL only)
-         ▼
-[ Stage 3: H4 Regime Classification ] (Kronos ONNX Runtime CPU)
-  ├─ Context: Exactly 512 closed H4 bars (~3.5–4 months)
-  ├─ Normalization: Zero-Leakage RollingFeatureScaler (window=512)
-  └─ Temporal Assertion Gate: max(X.timestamp) < y.timestamp
-         │
-         ▼
-[ Stage 4: Multi-Timeframe Strategy Pool ]
-  ├─ Strategy 1: Volatility Breakout (M15 Donchian + ATR expansion)
-  ├─ Strategy 2: Positioning Contrarian (OANDA Book >75% Crowding)
-  ├─ Strategy 3: Macro Intermarket (US TIPS 10Y Yield + DXY Proxy)
-  └─ Strategy 4: Mean-Reversion in Confirmed Ranging Regime
-         │ (Candidate Signal with R:R ≥ 2.0)
-         ▼
-[ Stage 5: Master Risk Gate & Watchdog (Go Daemon 127.0.0.1:20129) ]
-  ├─ Capital Invariants: Risk 0.5% | Daily Loss < 2% | Drawdown < 10%
-  ├─ Concurrency: Max 1 open position | Max 5 trades/day
-  └─ Graduated Sizing: Normal 100% | Thin Liquidity (Z_vol < -2.0) 50%
-         │ (Approved)
-         ▼
-[ Stage 6: Broker Bridge Execution (Exness MT5) ]
-  ├─ Thread-Safe MT5 Lock (threading.RLock)
-  ├─ Mandatory Server-Side Attached SL/TP (Zero naked orders)
-  └─ Execution Mode: Dynamic IOC / FOK
-         │
-         ▼
-[ Stage 7: Active 5-Layer Exit Management ]
-  ├─ Layer 1: Fixed Server-Side SL & TP
-  ├─ Layer 2: Dynamic Trailing Stop (+1.0R profit)
-  ├─ Layer 3: Partial Scale-Out (50% volume at +1.0R)
-  ├─ Layer 4: Time Invalidation (8 M15 bars / 2 hours)
-  ├─ Layer 5: Regime Invalidation (H4 reversal emergency exit)
-  └─ Hard Rollover Liquidation: 15 min before bank break (20:44 / 21:44 UTC)
-         │
-         ▼
-[ Stage 8: Reporting & Dual-Stream Telegram Distribution ]
-  ├─ Stream 1: Control Panel Bot (Private Chat with Admin, 2-Step Confirm)
-  ├─ Stream 2: Signal Broadcast Channel (Signal Alert + Candlestick Chart)
-  └─ Stream 3: Daily Session Metrics & Dashboard Summary
+> **Diagram 2 of 2 — Virtual Tracker, Risk Gate, Broker Execution & Orchestration (Stages 5–8)**
+
+```mermaid
+flowchart TD
+    OBSEMIT["SignalObservationRecord\nin SQLite WAL"]
+
+    subgraph S5["Stage 5 — Virtual Signal Tracker (2.0s Mark-to-Market Loop)"]
+        VPOLL["Poll Open Signal Observations\nZero Capital Risk — Pure Forward-Test Journal"]
+        EXIT1["L1: Fixed SL/TP w/ Real Bid/Ask Spread Cost"]
+        EXIT2["L2: Trailing Breakeven at +1.0R\nDynamic Spread Buffer Applied"]
+        EXIT3["L3: Min-Lot 0.01 Partial Skip Handling"]
+        EXIT4["L4: Time Invalidation — 8 M15 Bars / 7200s"]
+        EXIT5["L5: H4 Regime Flip Invalidation"]
+        ROLLOVER["Hard Rollover: Force Exit 15m Before Bank Break\n20:44 UTC Summer / 21:44 UTC Winter"]
+        VJRNL["Update Observation Outcome\nDeterministic Net Realized R Recorded"]
+    end
+
+    subgraph S6["Stage 6 — Master Risk Gate (Go Watchdog — 127.0.0.1:20129)"]
+        WDOG["Independent Go Daemon Supervisor\nRead-Only SQLite WAL Isolation — Out-of-Process"]
+        RC1["Equity > 0"]
+        RC2["Daily Loss < 2.0%"]
+        RC3["Max Drawdown < 10.0%"]
+        RC4["Open Positions == 0"]
+        RC5["Trades Today < 5"]
+        SIZING["Graduated Liquidity Sizing\nNormal Z ≥ -2.0 → 100% (0.5% risk)\nThin Z < -2.0 → 50% lot\nRollover / Holiday → 0% Blocked"]
+        KILL["Emergency Deadman Switch\nMulti-Stage SIGKILL Escalation\nPersistent Lockfile on Breach"]
+    end
+
+    subgraph S7["Stage 7 — Broker Bridge Execution (Exness MetaTrader 5)"]
+        RLOCK["ExnessBrokerBridge\nthreading.RLock Mutual Exclusion"]
+        SLTP["Mandatory Server-Side SL (1.5×ATR) + TP\nNaked Orders Strictly Prohibited"]
+        FILLMODE["Dynamic Fill Mode Selection\nFill-Or-Kill (FOK) / IOC per Broker Capability"]
+        SIGONLY["SIGNAL_ONLY Lock Default\nUnlocked by Operator — GATE-M4 & GATE-M5 Cleared"]
+    end
+
+    subgraph S8["Stage 8 — Orchestration & Dual-Stream Telegram Operations"]
+        TASKGRP["RuntimeService — asyncio.TaskGroup\nLoop A + Loop B + Tracker + Publisher Concurrent"]
+        DASH["Stream 1: Signal-Only Admin Dashboard\nStrict Lexical Purity — Zero Lot/Equity/Ticket/Imperatives"]
+        CTRL["Stream 2: Admin Control Panel\nWhitelisted TELEGRAM_ADMIN_ID\n60s Single-Use Nonces · 15s Two-Step Confirm"]
+        REPORT["Stream 3: Daily Session Metrics Reporter\nNet PnL · Win Ratio · Max Drawdown · Audit Ledger"]
+    end
+
+    OBSEMIT --> VPOLL
+    VPOLL --> EXIT1 --> EXIT2 --> EXIT3 --> EXIT4 --> EXIT5 --> ROLLOVER --> VJRNL
+    OBSEMIT --> WDOG
+    WDOG --> RC1
+    WDOG --> RC2
+    WDOG --> RC3
+    WDOG --> RC4
+    WDOG --> RC5
+    RC1 --> SIZING
+    RC2 --> SIZING
+    RC3 --> SIZING
+    RC4 --> SIZING
+    RC5 --> SIZING
+    RC1 -- "Breach" --> KILL
+    RC2 -- "Breach" --> KILL
+    RC3 -- "Breach" --> KILL
+    RC4 -- "Breach" --> KILL
+    RC5 -- "Breach" --> KILL
+    SIZING --> RLOCK
+    RLOCK --> SLTP --> FILLMODE --> SIGONLY
+    VJRNL --> TASKGRP
+    SIGONLY --> TASKGRP
+    TASKGRP --> DASH
+    TASKGRP --> CTRL
+    TASKGRP --> REPORT
 ```
 
 ### Detailed Workflow Stages

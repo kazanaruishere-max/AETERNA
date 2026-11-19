@@ -3,8 +3,8 @@
   "model": "9router/deepreasoning",
   "default_agent": "aeterna-lead",
   "instructions": [
-    "docs/AGENTS.local.md",
-    "docs/aeterna/agent-contract.md",
+    "AGENTS.md",
+    "docs/aeterna/agent-state.md",
     "docs/aeterna/invariant-cheatsheet.md"
   ],
   "permission": {
