@@ -132,6 +132,10 @@ class VirtualSignalTracker:
         rr_actual = abs(signal.tp_px - signal.entry_px) / risk_distance
         if rr_actual >= MIN_RR_RATIO and net_r >= rr_actual:
             return ("CLOSED_TP", net_r, "tp_hit")
+        if signal.state == "BE_ARMED":
+            if net_r <= BE_FLOOR_R:
+                return ("CLOSED_TRAILING", BE_FLOOR_R, "trailing_hit")
+            return ("BE_ARMED", max(BE_FLOOR_R, signal.r_realized_net), None)
         if net_r >= BE_ARMED_NET_R:
             return ("BE_ARMED", max(BE_FLOOR_R, signal.r_realized_net), None)
         if net_r >= PARTIAL_NET_R and signal.lot_virtual <= MIN_LOT_VIRTUAL:
