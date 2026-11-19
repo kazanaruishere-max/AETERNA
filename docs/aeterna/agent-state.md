@@ -4,20 +4,22 @@ updated_utc: "2026-11-19"
 project: "AETERNA Quant"
 phase: "P1 Journal"
 mode: "SIGNAL_ONLY"
-active_role: "aeterna-lead"
-active_task: null
-task_packet: null
+active_role: "aeterna-backtest"
+active_task: "TASK-RUNTIME-06"
+task_packet: ".handoff/tasks/TASK-RUNTIME-06-TRACKER-GAP-CLOSURE.md"
 branch: "docs/readme-robust-ascii-workflow"
-authored_from_head: "a32346a"
-base_ref: "origin/main"
-base_commit: "e8906df"
-allowed_paths: []
+authored_from_head: "441e73d"
+base_ref: "docs/readme-robust-ascii-workflow"
+base_commit: "441e73d"
+allowed_paths:
+  - "engine/runtime/virtual_tracker.py"
+  - "tests/runtime/test_virtual_tracker.py"
 gate_status:
   GATE-RUNTIME-LOOP-B: "CHANGES_REQUESTED"
   GATE-M4: "PENDING_HUMAN_AUDIT"
   GATE-M5: "PENDING_HUMAN_AUDIT"
   GATE-VIRTUAL-JOURNAL: "QUEUED"
-next_action: "Jalankan canary read-only; jika lulus, buat TASK-RUNTIME-06-LOOKAHEAD-FIX."
+next_action: "Jalankan Codex CLI pada task_packet TASK-RUNTIME-06; berhenti setelah PR, jangan merge."
 ---
 
 # AETERNA Agent State
