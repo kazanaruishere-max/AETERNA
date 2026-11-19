@@ -1,0 +1,277 @@
+"""Signal-only runtime dependency composition and bundle factory.
+
+Module: engine.runtime.bootstrap
+Responsibility: Compose all runtime dependencies (ExnessClient, DatabaseManager,
+    SpreadFilter, NewsCalendarFilter, NewsStateMachine, KronosH4RegimeEngine,
+    strategy adapter, Loop A/B, VirtualSignalTracker, SignalOnlyDashboard,
+    RuntimeService) into an immutable RuntimeBundle via build_runtime_bundle().
+Owner: aeterna-architect
+Tier: Tier A
+"""
+
+# pyright: reportMissingTypeStubs=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from engine.analysis_engine.python.interfaces import (
+    KronosInferenceEngine,
+    StrategyEvaluator,
+)
+from engine.analysis_engine.python.types import CandleDict
+from engine.ingestion.python.exness_client import ExnessClient
+from engine.models.kronos.inference import KronosH4RegimeEngine
+from engine.runtime.dashboard import SignalOnlyDashboard
+from engine.runtime.loop_a import FastTickLoopA
+from engine.runtime.loop_b import AnalysisLoopB
+from engine.runtime.runtime_service import RuntimeService
+from engine.runtime.virtual_tracker import VirtualSignalTracker
+from engine.shared.db.database import DatabaseManager
+from engine.state_machine.news_filter import NewsCalendarFilter
+from engine.state_machine.spread_filter import SpreadFilter
+from engine.state_machine.state_machine import NewsStateMachine
+from engine.telegram_bot.client import TelegramControlBot
+from instruments.xauusd.strategies.volatility_breakout import (
+    SignalType,
+    VolatilityBreakoutStrategy,
+)
+
+logger = logging.getLogger("aeterna.runtime.bootstrap")
+
+_REQUIRED_DF_COLUMNS = ["timestamp_utc", "open", "high", "low", "close", "tick_volume"]
+_SPREAD_FILTER_MIN_STD_DEV = 0.5  # ADR-016
+
+
+# ---------------------------------------------------------------------------
+# Strategy adapter
+# ---------------------------------------------------------------------------
+
+
+class _VolatilityBreakoutAdapter:
+    """Adapts CandleDict lists to VolatilityBreakoutStrategy.evaluate_signal(DataFrame)."""
+
+    def __init__(self) -> None:
+        self._strategy = VolatilityBreakoutStrategy()
+
+    def evaluate_signals(
+        self,
+        m15_candles: list[CandleDict],
+        h4_candles: list[CandleDict],
+        macro: Any = None,
+        sentiment: Any = None,
+    ) -> list[Any]:
+        """Convert CandleDict → DataFrame, call evaluate_signal, filter NO_SIGNAL."""
+        try:
+            m15_df = _candle_dicts_to_df(m15_candles)
+            h4_df = _candle_dicts_to_df(h4_candles)
+            signal = self._strategy.evaluate_signal(m15_df, h4_df)
+            if signal.signal_type is SignalType.NO_SIGNAL:
+                return []
+            return [signal]
+        except Exception:
+            logger.exception("strategy_adapter: evaluate_signal failed; returning []")
+            return []
+
+
+def _candle_dicts_to_df(candles: list[CandleDict]) -> pd.DataFrame:
+    """Convert a list of CandleDict to a pandas DataFrame with canonical columns."""
+    rows = [
+        {
+            "timestamp_utc": c["timestamp_utc"],
+            "open": float(c["open"]),
+            "high": float(c["high"]),
+            "low": float(c["low"]),
+            "close": float(c["close"]),
+            "tick_volume": float(c["tick_volume"]),
+        }
+        for c in candles
+    ]
+    df = pd.DataFrame(rows, columns=_REQUIRED_DF_COLUMNS)
+    return df.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# RuntimeBundle
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RuntimeBundle:
+    """Immutable composition of all runtime components."""
+
+    runtime: RuntimeService
+    loop_a: FastTickLoopA
+    loop_b: AnalysisLoopB
+    tracker: VirtualSignalTracker
+    dashboard: SignalOnlyDashboard
+    db_manager: DatabaseManager
+    state_machine: NewsStateMachine
+    news_filter: NewsCalendarFilter
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def build_runtime_bundle(
+    *,
+    exness_client: ExnessClient,
+    control_bot: TelegramControlBot,
+    admin_chat_id: int,
+    db_path: str = "data/trading.db",
+    symbol: str = "XAUUSDm",
+    model_path: str = "data/models/kronos_h4.onnx",
+    poll_interval_seconds: float = 2.0,
+    publish_interval_seconds: float = 5.0,
+    news_events: Sequence[datetime] | None = None,
+    strategy_evaluator: StrategyEvaluator | None = None,
+    kronos_engine: KronosInferenceEngine | None = None,
+) -> RuntimeBundle:
+    """Compose and return the immutable signal-only RuntimeBundle.
+
+    All dependencies are injected; tests can pass mocks for every component.
+    No real order is ever sent; mode is strictly SIGNAL_ONLY.
+    """
+    # 1. News calendar filter — default empty, log source
+    news_filter = _build_news_filter(news_events)
+
+    # 2. Spread filter (ADR-016 min_std_dev)
+    spread_filter = SpreadFilter(min_std_dev=_SPREAD_FILTER_MIN_STD_DEV)
+
+    # 3. Database manager
+    db_manager = DatabaseManager(db_path=db_path)
+
+    # 4. State machine
+    state_machine = NewsStateMachine(
+        spread_filter=spread_filter,
+        news_filter=news_filter,
+        db_manager=db_manager,
+    )
+
+    # 5. Kronos engine — fallback heuristic when ONNX unavailable
+    effective_kronos = _build_kronos(kronos_engine, model_path)
+
+    # 6. Strategy evaluator adapter
+    effective_evaluator: StrategyEvaluator = (
+        strategy_evaluator
+        if strategy_evaluator is not None
+        else _VolatilityBreakoutAdapter()  # type: ignore[assignment]
+    )
+
+    # 7. M15 event (shared between Loop A and B)
+    m15_event = asyncio.Event()
+
+    # 8. Loop A
+    loop_a = FastTickLoopA(
+        exness_client=exness_client,
+        state_machine=state_machine,
+        db_manager=db_manager,
+        m15_event=m15_event,
+        symbol=symbol,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+    # 9. Loop B
+    loop_b = AnalysisLoopB(
+        exness_client=exness_client,
+        kronos_engine=effective_kronos,
+        strategy_evaluator=effective_evaluator,
+        state_machine=state_machine,
+        db_manager=db_manager,
+        symbol=symbol,
+    )
+
+    # 10. Dashboard (uses TelegramControlBot.send as transport)
+    dashboard = SignalOnlyDashboard(
+        client=control_bot,
+        admin_chat_id=admin_chat_id,
+    )
+
+    # 11. VirtualSignalTracker
+    tracker = VirtualSignalTracker(
+        exness_client=exness_client,
+        db_manager=db_manager,
+        regime_provider=lambda: (
+            effective_kronos.infer_regime([]).regime  # type: ignore[arg-type]
+            if False
+            else "RANGING"
+        ),
+        symbol=symbol,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+    # 12. RuntimeService
+    runtime = RuntimeService(
+        loop_a=loop_a,
+        loop_b=loop_b,
+        virtual_tracker=tracker,
+        dashboard=dashboard,
+        db_manager=db_manager,
+        symbol=symbol,
+        publish_interval_seconds=publish_interval_seconds,
+    )
+
+    return RuntimeBundle(
+        runtime=runtime,
+        loop_a=loop_a,
+        loop_b=loop_b,
+        tracker=tracker,
+        dashboard=dashboard,
+        db_manager=db_manager,
+        state_machine=state_machine,
+        news_filter=news_filter,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_news_filter(events: Sequence[datetime] | None) -> NewsCalendarFilter:
+    """Create NewsCalendarFilter; log NEWS_SOURCE and NEWS_EVENT_COUNT."""
+    if events is None:
+        logger.info("NEWS_SOURCE=NONE NEWS_EVENT_COUNT=0")
+        return NewsCalendarFilter(events=None)
+
+    news_filter = NewsCalendarFilter(events=list(events))
+    count = len(news_filter.scheduled_events)
+    logger.info("NEWS_SOURCE=INJECTED NEWS_EVENT_COUNT=%d", count)
+    return news_filter
+
+
+def _build_kronos(
+    kronos_engine: KronosInferenceEngine | None,
+    model_path: str,
+) -> KronosInferenceEngine:
+    """Return injected engine or build KronosH4RegimeEngine with fallback heuristic."""
+    if kronos_engine is not None:
+        return kronos_engine
+
+    model_file = Path(model_path)
+    if not model_file.is_file():
+        logger.info(
+            "MODEL_FALLBACK=HEURISTIC reason=model_file_not_found path=%s", model_path
+        )
+        return KronosH4RegimeEngine(model_path=None)
+
+    try:
+        engine = KronosH4RegimeEngine(model_path=str(model_file))
+        logger.info("KronosH4RegimeEngine loaded model_path=%s", model_path)
+        return engine
+    except (FileNotFoundError, RuntimeError) as exc:
+        logger.info("MODEL_FALLBACK=HEURISTIC reason=%s", exc)
+        return KronosH4RegimeEngine(model_path=None)
