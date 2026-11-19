@@ -4,9 +4,9 @@ Module: engine.main
 Responsibility: Bootstraps the live operational loop:
 1. Validates DPAPI encrypted secrets and loads trading credentials.
 2. Initializes MetaTrader 5 broker connection via ExnessClient.
-3. Performs Watchdog IPC handshake (127.0.0.1:20129).
-4. Launches Telegram Bot Control Panel (/menu) in async task.
-5. Runs the M15 bar polling and multi-strategy evaluation cycle.
+3. Launches Telegram Bot Control Panel (/menu) in async task.
+4. Builds RuntimeBundle via build_runtime_bundle (signal-only, no live orders).
+5. Runs RuntimeService.run_forever and Telegram polling concurrently.
 6. Implements clean SIGINT / SIGTERM graceful shutdown.
 Owner: aeterna-architect
 Tier: Tier A
@@ -24,6 +24,7 @@ from typing import Any
 
 from engine.ingestion.python.exness_client import ExnessClient
 from engine.monitoring.types import DailyMetrics
+from engine.runtime.bootstrap import build_runtime_bundle
 from engine.security.dpapi import DEFAULT_SECRETS_PATH, load_trading_secrets
 from engine.security.log_sanitizer import LogSanitizer
 from engine.telegram_bot.auth import (
@@ -113,10 +114,9 @@ async def run_trading_loop(
     bot: TelegramControlBot | None,
     stop_event: asyncio.Event,
 ) -> None:
-    """Main non-blocking execution loop."""
-    logger.info("AETERNA Quant Trading Loop active. Press Ctrl+C to terminate.")
+    """Telegram polling loop — runs concurrently with RuntimeService."""
+    logger.info("AETERNA Quant Telegram polling loop active.")
 
-    # Periodic polling interval (e.g. 5 seconds)
     while not stop_event.is_set():
         try:
             # 1. Poll Telegram updates if bot is configured
@@ -130,7 +130,6 @@ async def run_trading_loop(
                 logger.warning("MT5 connection offline, attempting reconnect...")
                 exness.connect()
 
-            # Wait briefly before next iteration
             await asyncio.sleep(2.0)
         except asyncio.CancelledError:
             break
@@ -234,9 +233,41 @@ async def main_async() -> int:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, signal_handler)
 
+    # 5. Log operational mode — SIGNAL_ONLY, no live orders
+    logger.info("MODE=SIGNAL_ONLY LIVE_ORDER=DISABLED")
+
+    # 6. Build RuntimeBundle — only if MT5 is connected
+    runtime_bundle = None
+    if control_bot is not None and tg_admin_id:
+        if exness.connected:
+            runtime_bundle = build_runtime_bundle(
+                exness_client=exness,
+                control_bot=control_bot,
+                admin_chat_id=tg_admin_id,
+            )
+            logger.info("RuntimeBundle built for symbol=XAUUSDm")
+        else:
+            logger.warning(
+                "RUNTIME_STANDBY=MT5_OFFLINE — RuntimeService not started. "
+                "Telegram Control Panel remains active."
+            )
+
     try:
-        await run_trading_loop(exness, control_bot, stop_event)
+        if runtime_bundle is not None:
+            # 7. Run RuntimeService + Telegram polling concurrently
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(
+                    runtime_bundle.runtime.run_forever(stop_event),
+                    name="runtime-service",
+                )
+                tg.create_task(
+                    run_trading_loop(exness, control_bot, stop_event),
+                    name="telegram-polling",
+                )
+        else:
+            await run_trading_loop(exness, control_bot, stop_event)
     finally:
+        stop_event.set()
         logger.info("Disconnecting MT5 terminal and cleaning resources...")
         exness.disconnect()
         logger.info("AETERNA Quant Engine shutdown complete.")
