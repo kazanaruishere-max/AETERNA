@@ -14,6 +14,7 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 from unittest.mock import MagicMock
@@ -344,11 +345,14 @@ def test_be_trigger_r_configurable() -> None:
 
 def test_lapis_4_and_5_invalidation_rules() -> None:
     """Verify static helper methods for Lapis 4 (time) and Lapis 5 (rollover & regime)."""
-    # Lapis 4: Time invalidation requires >= 16 bars and floating R < 0.3
-    assert not PositionManager.is_time_invalidated(15, 0.1)
-    assert not PositionManager.is_time_invalidated(16, 0.5)
-    assert PositionManager.is_time_invalidated(16, 0.2)
-    assert PositionManager.is_time_invalidated(20, -0.5)
+    # Lapis 4: Time invalidation requires >= 8 bars M15 (invariant-cheatsheet §4.4)
+    assert not PositionManager.is_time_invalidated(7, 0.1)
+    assert not PositionManager.is_time_invalidated(7, 0.2)
+    assert PositionManager.is_time_invalidated(8, 0.2) is True
+    assert PositionManager.is_time_invalidated(7, 0.2) is False
+    assert PositionManager.is_time_invalidated(8, 0.5) is True
+    assert PositionManager.is_time_invalidated(8, -0.5) is True
+    assert PositionManager.is_time_invalidated(12, 0.0) is True
 
     # Lapis 5: Rollover window (20:44+ UTC and 21:44+ UTC)
     from datetime import UTC, datetime
@@ -364,4 +368,40 @@ def test_lapis_4_and_5_invalidation_rules() -> None:
     assert not PositionManager.is_regime_invalidated("BUY", "BULLISH_TRENDING")
     assert PositionManager.is_regime_invalidated("SELL", "BULLISH_TRENDING")
     assert not PositionManager.is_regime_invalidated("SELL", "BEARISH_TRENDING")
+
+
+def test_evaluate_time_invalidation_active_evaluation_path() -> None:
+    """Verify time invalidation is actively evaluated and liquidates position at 8 bars."""
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        success=True, closed_ticket=10001, new_ticket=None, closed_lot=0.04, remaining_lot=0.0, executed_price=2755.0
+    )
+    pm = PositionManager(bridge=mock_bridge)
+
+    # 1. Active position with 7 bars elapsed -> must NOT liquidate
+    pos_7 = _create_sample_buy_pos(current_lot=0.04)
+    pos_7 = dataclasses.replace(pos_7, elapsed_bars_m15=7)
+    tick = DummyTick(bid=2751.0, ask=2751.3)  # Floating < 1.0R
+    _res_pos_7, _mod_res_7, close_res_7 = pm.evaluate_trailing_and_scaleout(
+        pos_7, tick, DEFAULT_INFO, now_mono=10.0
+    )
+    assert close_res_7 is None
+    mock_bridge.close_partial_position.assert_not_called()
+
+    # 2. Active position with 8 bars elapsed -> MUST liquidate via bridge
+    pos_8 = dataclasses.replace(pos_7, elapsed_bars_m15=8)
+    res_pos_8, _mod_res_8, close_res_8 = pm.evaluate_trailing_and_scaleout(
+        pos_8, tick, DEFAULT_INFO, now_mono=10.0
+    )
+    assert close_res_8 is not None
+    assert close_res_8.success is True
+    assert res_pos_8.current_lot == 0.0
+    mock_bridge.close_partial_position.assert_called_once_with(
+        ticket=10001,
+        position_identifier=9999,
+        symbol="XAUUSD",
+        direction="BUY",
+        close_lot=0.04,
+    )
+
 

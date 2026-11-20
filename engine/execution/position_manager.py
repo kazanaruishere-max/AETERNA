@@ -46,6 +46,7 @@ class PositionState:
     be_sl_modified: bool = False       # Layer 2 capital protection flag
     partial_closed: bool = False       # Layer 3 take-profit flag
     last_modify_time_mono: float = 0.0 # Monotonic timestamp of last modification
+    elapsed_bars_m15: int = 0          # Number of closed M15 bars elapsed since entry
 
     def with_break_even_sl(self, new_sl: float, timestamp_mono: float) -> PositionState:
         """Return new state after successful SL break-even or trailing modification."""
@@ -64,6 +65,7 @@ class PositionState:
             be_sl_modified=True,
             partial_closed=self.partial_closed,
             last_modify_time_mono=timestamp_mono,
+            elapsed_bars_m15=self.elapsed_bars_m15,
         )
 
     def with_partial_close(self, new_ticket: int, remaining_lot: float) -> PositionState:
@@ -83,6 +85,7 @@ class PositionState:
             be_sl_modified=self.be_sl_modified,
             partial_closed=True,
             last_modify_time_mono=self.last_modify_time_mono,
+            elapsed_bars_m15=self.elapsed_bars_m15,
         )
 
 
@@ -233,14 +236,44 @@ class PositionManager:
             pos = dataclasses.replace(pos, last_modify_time_mono=now)
         return pos, mod_res
 
+    def evaluate_time_invalidation(
+        self,
+        pos: PositionState,
+        elapsed_bars_m15: int | None = None,
+    ) -> tuple[PositionState, PartialCloseResult | None]:
+        """Evaluate Lapis 4 Time Invalidation (8 closed bars on M15) and liquidate if expired."""
+        bars = pos.elapsed_bars_m15 if elapsed_bars_m15 is None else elapsed_bars_m15
+        if self.is_time_invalidated(bars):
+            logger.info(
+                "Lapis 4 Time Invalidation triggered for ticket %s (%d bars M15). Liquidating position.",
+                pos.ticket,
+                bars,
+            )
+            close_res = self.bridge.close_partial_position(
+                ticket=pos.ticket,
+                position_identifier=pos.position_identifier,
+                symbol=pos.symbol,
+                direction=pos.direction,
+                close_lot=pos.current_lot,
+            )
+            if close_res.success:
+                pos = dataclasses.replace(pos, current_lot=0.0)
+            return pos, close_res
+        return pos, None
+
     def evaluate_trailing_and_scaleout(
         self,
         pos: PositionState,
         current_tick: Any,
         symbol_info: Any,
         now_mono: float | None = None,
+        elapsed_bars_m15: int | None = None,
     ) -> tuple[PositionState, ModifyResult | None, PartialCloseResult | None]:
         """Evaluate active position against +1.0R threshold, dynamic stop guard, and trailing logic."""
+        pos, time_inv_res = self.evaluate_time_invalidation(pos, elapsed_bars_m15)
+        if time_inv_res is not None:
+            return pos, None, time_inv_res
+
         now = time.monotonic() if now_mono is None else float(now_mono)
 
         if not pos.be_sl_modified:
@@ -254,9 +287,9 @@ class PositionManager:
         return pos, mod_res, None
 
     @staticmethod
-    def is_time_invalidated(elapsed_bars_m15: int, current_r: float) -> bool:
-        """Lapis 4 Time Invalidation: 16 closed bars on M15 (4 hours) if floating R < 0.3."""
-        return elapsed_bars_m15 >= 16 and current_r < 0.3
+    def is_time_invalidated(elapsed_bars_m15: int, current_r: float = 0.0) -> bool:
+        """Lapis 4 Time Invalidation: force close if market is stagnant for 8 closed M15 bars (2 hours)."""
+        return elapsed_bars_m15 >= 8
 
     @staticmethod
     def is_rollover_window(dt_utc: datetime) -> bool:
