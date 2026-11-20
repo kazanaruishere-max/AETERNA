@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -218,12 +219,29 @@ class EmergencyHandler(ExecutionEmergencyHandler):
     def execute_emergency_killswitch(self) -> bool:
         """Trigger emergency shutdown, writing physical killswitch lockfile and stopping loop."""
         logger.critical("EMERGENCY KILLSWITCH triggered!")
+        with self._state_lock:
+            peak = self.peak_equity
 
+        # Fail-closed: write physical lockfile before any DB/equity operations
+        payload = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "trigger_reason": "MANUAL_TELEGRAM_KILLSWITCH",
+            "peak_equity": round(peak, 2),
+            "current_equity": 0.0,
+            "drawdown_pct": 0.0,
+            "equity_source": "UNAVAILABLE",
+        }
+        if not self._write_lockfile(payload):
+            return False
+
+        with self._state_lock:
+            self._is_killed = True
+
+        current_equity, equity_source = 0.0, "UNAVAILABLE"
         try:
             current_equity, equity_source = self._resolve_current_equity()
-        except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+        except (sqlite3.Error, RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
             logger.error("Unexpected error resolving equity for killswitch: %s", exc)
-            current_equity, equity_source = 0.0, "UNAVAILABLE"
 
         with self._state_lock:
             if current_equity > 0.0:
@@ -234,37 +252,25 @@ class EmergencyHandler(ExecutionEmergencyHandler):
         if peak > 0.0 and current_equity < peak:
             drawdown_pct = round(((peak - current_equity) / peak) * 100.0, 4)
 
-        payload = {
-            "timestamp_utc": datetime.now(UTC).isoformat(),
-            "trigger_reason": "MANUAL_TELEGRAM_KILLSWITCH",
+        payload.update({
             "peak_equity": round(peak, 2),
             "current_equity": round(current_equity, 2),
             "drawdown_pct": round(drawdown_pct, 4),
             "equity_source": equity_source,
-        }
+        })
+        self._write_lockfile(payload)
 
-        # Step 1: Write physical EMERGENCY_KILLSWITCH.lock file first
-        if not self._write_lockfile(payload):
-            return False
-
-        with self._state_lock:
-            self._is_killed = True
-
-        # Step 2: Attempt DB state transition to PAUSED; log explicit error if it fails
         if not self.set_system_state_paused():
             logger.error(
                 "Killswitch lockfile written, but failed to transition system state to PAUSED in database"
             )
-
         return True
 
     def set_system_state_paused(self) -> bool:
         """Request immediate transition of system state to PAUSED."""
         db = self._get_db_manager()
         if db is None:
-            logger.error("set_system_state_paused: database repository unavailable")
-            with self._state_lock:
-                self._is_paused = True
+            logger.error("set_system_state_paused: database repository unavailable; PAUSED state not persisted")
             return False
 
         try:
@@ -288,17 +294,18 @@ class EmergencyHandler(ExecutionEmergencyHandler):
                 self._is_paused = True
             logger.warning("System state successfully transitioned to PAUSED in repository.")
             return True
-        except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
-            logger.exception("Failed to transition system state to PAUSED")
-            with self._state_lock:
-                self._is_paused = True
+        except (sqlite3.Error, RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+            logger.error(
+                "Failed to transition system state to PAUSED in repository: %s; PAUSED state not persisted",
+                exc,
+            )
             return False
 
     def set_system_state_normal(self) -> bool:
         """Request resumption of system state to NORMAL."""
         db = self._get_db_manager()
         if db is None:
-            logger.error("set_system_state_normal: database repository unavailable")
+            logger.error("set_system_state_normal: database repository unavailable; NORMAL state not persisted")
             return False
 
         try:
@@ -322,8 +329,11 @@ class EmergencyHandler(ExecutionEmergencyHandler):
                 self._is_paused = False
             logger.info("System state successfully transitioned to NORMAL in repository.")
             return True
-        except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
-            logger.exception("Failed to transition system state to NORMAL")
+        except (sqlite3.Error, RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+            logger.error(
+                "Failed to transition system state to NORMAL in repository: %s; NORMAL state not persisted",
+                exc,
+            )
             return False
 
     def _resolve_current_equity(self) -> tuple[float, str]:
@@ -342,7 +352,7 @@ class EmergencyHandler(ExecutionEmergencyHandler):
                     eq = float(state.equity_usd)
                     if eq > 0.0:
                         return eq, "DB_SYSTEM_STATE"
-        except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+        except (sqlite3.Error, RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
             logger.warning("Could not read equity from db_manager: %s", exc)
 
         # Try MT5 account info
@@ -374,7 +384,7 @@ class EmergencyHandler(ExecutionEmergencyHandler):
                 mgr = DatabaseManager(db_path=str(self.db_path))
                 mgr.init_db()
                 self._db_manager = mgr
-            except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+            except (sqlite3.Error, RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
                 logger.error("Failed to initialize DatabaseManager: %s", exc)
                 self._db_manager = "DB_INIT_FAILED"
 

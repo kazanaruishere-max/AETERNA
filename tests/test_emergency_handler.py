@@ -12,6 +12,8 @@ Responsibility: Verifies deterministic emergency handling:
 8. Killswitch writes lockfile even when DB init fails (fail-closed, cheapest test).
 9. Zero fabricated equity (no 1000.0) when equity cannot be resolved.
 10. Deviation from operator is forwarded to ExnessBrokerBridge.
+11. sqlite3.OperationalError and sqlite3.DatabaseError do not prevent lockfile generation.
+12. DB update failure during pause does not claim PAUSED is persisted.
 Covers: REQ-RUNTIME-007, REQ-EXE-001, REQ-TEL-003
 Owner: aeterna-verifier
 Tier: Tier A
@@ -20,6 +22,7 @@ Tier: Tier A
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -323,3 +326,89 @@ def test_main_py_uses_real_emergency_handler() -> None:
     assert "MockEmergencyHandler" not in source, "MockEmergencyHandler must be removed from engine.main"
     assert "from engine.execution.emergency_handler import EmergencyHandler" in source
     assert "EmergencyHandler(bridge=bridge, client=exness)" in source
+
+
+def test_emergency_killswitch_sqlite_operational_error_still_writes_lockfile(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Verify sqlite3.OperationalError during equity/DB resolution still writes lockfile."""
+    lock_file = tmp_path / "EMERGENCY_KILLSWITCH.lock"
+    assert not lock_file.exists()
+
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.get_system_state.side_effect = sqlite3.OperationalError("unable to open database file")
+    mock_db.set_system_state.side_effect = sqlite3.OperationalError("unable to open database file")
+
+    handler = EmergencyHandler(
+        db_manager=mock_db,
+        lockfile_path=lock_file,
+        peak_equity=1200.0,
+    )
+
+    with caplog.at_level("WARNING"):
+        ok = handler.execute_emergency_killswitch()
+
+    assert ok is True
+    assert lock_file.exists()
+    assert handler.is_killed is True
+
+    raw_content = lock_file.read_text(encoding="utf-8")
+    assert "1000" not in raw_content, "No fabricated 1000.0 equity allowed"
+
+    payload = json.loads(raw_content)
+    assert payload["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
+    assert payload["current_equity"] == 0.0
+    assert payload["equity_source"] == "UNAVAILABLE"
+    assert any("unable to open database file" in record.message for record in caplog.records)
+
+
+def test_emergency_killswitch_sqlite_database_error_still_writes_lockfile(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Verify sqlite3.DatabaseError during equity/DB resolution still writes lockfile."""
+    lock_file = tmp_path / "EMERGENCY_KILLSWITCH.lock"
+    assert not lock_file.exists()
+
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.get_system_state.side_effect = sqlite3.DatabaseError("file is not a database")
+    mock_db.set_system_state.side_effect = sqlite3.DatabaseError("file is not a database")
+
+    handler = EmergencyHandler(
+        db_manager=mock_db,
+        lockfile_path=lock_file,
+        peak_equity=1200.0,
+    )
+
+    with caplog.at_level("WARNING"):
+        ok = handler.execute_emergency_killswitch()
+
+    assert ok is True
+    assert lock_file.exists()
+    assert handler.is_killed is True
+
+    raw_content = lock_file.read_text(encoding="utf-8")
+    assert "1000" not in raw_content, "No fabricated 1000.0 equity allowed"
+
+    payload = json.loads(raw_content)
+    assert payload["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
+    assert payload["current_equity"] == 0.0
+    assert payload["equity_source"] == "UNAVAILABLE"
+    assert any("file is not a database" in record.message for record in caplog.records)
+
+
+def test_set_system_state_paused_db_error_does_not_claim_paused(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verify set_system_state_paused does not set _is_paused=True if DB update fails."""
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.set_system_state.side_effect = sqlite3.OperationalError("disk I/O error")
+
+    handler = EmergencyHandler(db_manager=mock_db)
+    assert handler.is_paused is False
+
+    with caplog.at_level("ERROR"):
+        ok = handler.set_system_state_paused()
+
+    assert ok is False
+    assert handler.is_paused is False
+    assert any("PAUSED state not persisted" in record.message for record in caplog.records)
