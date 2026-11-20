@@ -292,6 +292,7 @@ class ExnessBrokerBridge:
         symbol: str,
         direction: OrderDirection,
         close_lot: float,
+        deviation: int = 20,
     ) -> PartialCloseResult:
         """Execute partial position close and refresh new active ticket via POSITION_IDENTIFIER."""
         if close_lot < 0.01:
@@ -325,7 +326,7 @@ class ExnessBrokerBridge:
                 "volume": float(close_lot),
                 "type": order_type,
                 "price": price,
-                "deviation": 20,
+                "deviation": int(deviation),
                 "type_filling": filling_mode,
             }
 
