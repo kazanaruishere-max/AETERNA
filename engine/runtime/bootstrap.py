@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +105,64 @@ def _candle_dicts_to_df(candles: list[CandleDict]) -> pd.DataFrame:
     ]
     df = pd.DataFrame(rows, columns=_REQUIRED_DF_COLUMNS)
     return df.reset_index(drop=True)
+
+
+def _iso_utc(epoch_seconds: int) -> str:
+    """Format epoch seconds as canonical UTC candle timestamp."""
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _to_candle_dict(candle: Any) -> CandleDict:
+    """Adapt a CandleRecord or mapping into a CandleDict."""
+    if isinstance(candle, dict):
+        return CandleDict(
+            timestamp_utc=str(candle["timestamp_utc"]),
+            open=float(candle["open"]),
+            high=float(candle["high"]),
+            low=float(candle["low"]),
+            close=float(candle["close"]),
+            tick_volume=int(candle["tick_volume"]),
+        )
+    return CandleDict(
+        timestamp_utc=str(candle.timestamp_utc),
+        open=float(candle.open),
+        high=float(candle.high),
+        low=float(candle.low),
+        close=float(candle.close),
+        tick_volume=int(candle.tick_volume),
+    )
+
+
+def _build_chart_candle_provider(
+    exness_client: Any,
+) -> Callable[[int], list[CandleDict]]:
+    """Build chart candle provider querying ExnessClient up to closed bar_ts."""
+
+    def _provider(bar_ts: int) -> list[CandleDict]:
+        cutoff_str = _iso_utc(bar_ts)
+        lock = getattr(exness_client, "lock", None)
+        if lock is not None:
+            with lock:
+                records = exness_client.fetch_recent_candles("M15", 121)
+        else:
+            records = exness_client.fetch_recent_candles("M15", 121)
+
+        if not records:
+            return []
+
+        closed = [
+            _to_candle_dict(c)
+            for c in records
+            if (
+                c.get("timestamp_utc", "")
+                if isinstance(c, dict)
+                else getattr(c, "timestamp_utc", "")
+            )
+            <= cutoff_str
+        ]
+        return closed[-120:]
+
+    return _provider
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +266,9 @@ def _build_loops_and_tracker(
     return loop_a, loop_b, tracker
 
 
+_DEFAULT_PROVIDER: Any = object()
+
+
 def build_runtime_bundle(
     *,
     exness_client: ExnessClient,
@@ -223,6 +284,7 @@ def build_runtime_bundle(
     reasoning_enabled: bool = True,
     strategy_evaluator: StrategyEvaluator | None = None,
     kronos_engine: KronosInferenceEngine | None = None,
+    chart_candle_provider: Callable[[int], list[CandleDict]] | None = _DEFAULT_PROVIDER,
 ) -> RuntimeBundle:
     """Compose and return the immutable signal-only RuntimeBundle.
 
@@ -267,6 +329,12 @@ def build_runtime_bundle(
         db_manager=db_manager,
         regime_provider=tracker.regime_provider,
     )
+    effective_candle_provider: Callable[[int], list[CandleDict]] | None
+    if chart_candle_provider is _DEFAULT_PROVIDER:
+        effective_candle_provider = _build_chart_candle_provider(exness_client)
+    else:
+        effective_candle_provider = chart_candle_provider
+
     runtime = RuntimeService(
         loop_a=loop_a,
         loop_b=loop_b,
@@ -275,6 +343,7 @@ def build_runtime_bundle(
         db_manager=db_manager,
         symbol=symbol,
         publish_interval_seconds=publish_interval_seconds,
+        chart_candle_provider=effective_candle_provider,
     )
 
     return RuntimeBundle(

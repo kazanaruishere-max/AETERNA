@@ -114,8 +114,11 @@ def _make_mock_exness(bar_ts: int = BAR_TS) -> MagicMock:
     return mock
 
 
-def _make_mock_control_bot(sends: list[dict[str, Any]]) -> MagicMock:
-    """Return a TelegramControlBot mock that records send calls."""
+def _make_mock_control_bot(
+    sends: list[dict[str, Any]],
+    photos: list[dict[str, Any]] | None = None,
+) -> MagicMock:
+    """Return a TelegramControlBot mock that records send and send_photo calls."""
     mock = MagicMock()
     mock.send_initial_dashboard.return_value = True
 
@@ -123,7 +126,21 @@ def _make_mock_control_bot(sends: list[dict[str, Any]]) -> MagicMock:
         sends.append(payload)
         return True
 
+    def _record_send_photo(chat_id: int, photo: bytes, caption: str) -> bool:
+        payload = {
+            "method": "sendPhoto",
+            "chat_id": chat_id,
+            "photo": photo,
+            "caption": caption,
+            "text": caption,
+        }
+        sends.append(payload)
+        if photos is not None:
+            photos.append(payload)
+        return True
+
     mock.send.side_effect = _record_send
+    mock.send_photo.side_effect = _record_send_photo
     return mock
 
 
@@ -255,6 +272,16 @@ async def test_e2e_tick_to_observation_to_admin_publish(tmp_path: Any) -> None:
     assert len(sends) >= 1
     for payload in sends:
         assert payload.get("chat_id") == ADMIN_CHAT_ID
+        assert payload.get("method") == "sendPhoto"
+        photo_bytes = payload.get("photo")
+        assert isinstance(photo_bytes, bytes)
+        assert photo_bytes != b"fake_image"
+        assert photo_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        assert b"IHDR" in photo_bytes
+        assert b"IDAT" in photo_bytes
+        assert b"IEND" in photo_bytes
+        assert b"XAUUSD OBSERVATION" in photo_bytes
+
         text = str(payload.get("text", "")).lower()
         for token in PROHIBITED_TOKENS:
             assert token not in text, f"Prohibited token '{token}' in payload: {text!r}"
@@ -571,3 +598,121 @@ def test_e2e_calendar_snapshot_missing_fallback(
 
     assert "NEWS_SOURCE=NONE" in caplog.text
     assert len(bundle.news_filter.scheduled_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_e2e_chart_provider_excludes_forming_bar(tmp_path: Any) -> None:
+    """Chart candle provider must filter out forming bar and keep only closed bars <= bar_ts."""
+    db_path = str(tmp_path / "trading_forming.db")
+    sends: list[dict[str, Any]] = []
+
+    # _make_mock_exness returns 100 closed bars + 1 forming bar at bar_ts + 900
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot(sends)
+    evaluator = _DeterministicEvaluator(SignalType.BUY)
+    kronos = _FakeKronos("TRENDING_BULLISH")
+
+    bundle = build_runtime_bundle(
+        exness_client=exness,
+        control_bot=control_bot,
+        admin_chat_id=ADMIN_CHAT_ID,
+        db_path=db_path,
+        symbol="XAUUSDm",
+        strategy_evaluator=evaluator,  # type: ignore[arg-type]
+        kronos_engine=kronos,  # type: ignore[arg-type]
+        publish_interval_seconds=0.1,
+    )
+
+    assert bundle.runtime.chart_candle_provider is not None
+    candles = bundle.runtime.chart_candle_provider(BAR_TS)
+    assert len(candles) <= 120
+    assert len(candles) == 100
+    forming_ts_str = _iso_utc(BAR_TS + 900)
+    for c in candles:
+        assert c["timestamp_utc"] <= _iso_utc(BAR_TS)
+        assert c["timestamp_utc"] != forming_ts_str
+
+
+@pytest.mark.asyncio
+async def test_e2e_chart_provider_empty_falls_back_to_text(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When chart provider returns empty list, fallback to text and log CHART_UNAVAILABLE."""
+    db_path = str(tmp_path / "trading_empty.db")
+    sends: list[dict[str, Any]] = []
+
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot(sends)
+    evaluator = _DeterministicEvaluator(SignalType.BUY)
+    kronos = _FakeKronos("TRENDING_BULLISH")
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.runtime_service"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=db_path,
+            symbol="XAUUSDm",
+            strategy_evaluator=evaluator,  # type: ignore[arg-type]
+            kronos_engine=kronos,  # type: ignore[arg-type]
+            chart_candle_provider=lambda _ts: [],
+            publish_interval_seconds=0.1,
+        )
+
+        obs = await bundle.loop_b.run_once(BAR_TS)
+        assert obs is not None
+        await _run_publish_burst(bundle.runtime)
+
+    assert len(sends) >= 1
+    assert "CHART_UNAVAILABLE=FALLBACK_TEXT" in caplog.text
+    for payload in sends:
+        assert payload.get("method") == "sendMessage"
+        assert "photo" not in payload
+        assert payload.get("chat_id") == ADMIN_CHAT_ID
+        text = str(payload.get("text", "")).lower()
+        for token in PROHIBITED_TOKENS:
+            assert token not in text
+
+
+@pytest.mark.asyncio
+async def test_e2e_chart_provider_exception_falls_back_to_text(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When chart provider raises an exception, fallback to text and log CHART_UNAVAILABLE."""
+    db_path = str(tmp_path / "trading_exc.db")
+    sends: list[dict[str, Any]] = []
+
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot(sends)
+    evaluator = _DeterministicEvaluator(SignalType.BUY)
+    kronos = _FakeKronos("TRENDING_BULLISH")
+
+    def _broken_provider(_ts: int) -> list[CandleDict]:
+        raise RuntimeError("MT5 connection drop")
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.runtime_service"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=db_path,
+            symbol="XAUUSDm",
+            strategy_evaluator=evaluator,  # type: ignore[arg-type]
+            kronos_engine=kronos,  # type: ignore[arg-type]
+            chart_candle_provider=_broken_provider,
+            publish_interval_seconds=0.1,
+        )
+
+        obs = await bundle.loop_b.run_once(BAR_TS)
+        assert obs is not None
+        await _run_publish_burst(bundle.runtime)
+
+    assert len(sends) >= 1
+    assert "CHART_UNAVAILABLE=FALLBACK_TEXT" in caplog.text
+    for payload in sends:
+        assert payload.get("method") == "sendMessage"
+        assert "photo" not in payload
+        assert payload.get("chat_id") == ADMIN_CHAT_ID
+        text = str(payload.get("text", "")).lower()
+        for token in PROHIBITED_TOKENS:
+            assert token not in text
