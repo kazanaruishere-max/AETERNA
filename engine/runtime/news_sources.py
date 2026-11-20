@@ -72,27 +72,30 @@ def load_calendar_snapshot(path: str | Path | None) -> list[datetime]:
         raw_ts = ev.get("timestamp_utc") or ev.get("timestamp") or ev.get("time")
         if not raw_ts:
             continue
-        dt = _parse_utc_datetime(raw_ts)
-        if dt is not None:
+        try:
+            dt = _parse_utc_datetime(raw_ts)
             valid_events.append(dt)
+        except (ValueError, TypeError) as exc:
+            logger.warning("NEWS_EVENT_PARSE_REJECTED reason=%s", exc)
+            continue
 
     valid_events.sort()
     logger.info("NEWS_SOURCE=MQL5_SNAPSHOT event_count=%d", len(valid_events))
     return valid_events
 
 
-def _parse_utc_datetime(raw: object) -> datetime | None:
-    """Parse raw timestamp into timezone-aware UTC datetime."""
+def _parse_utc_datetime(raw: object) -> datetime:
+    """Parse raw timestamp into timezone-aware UTC datetime, failing fast on invalid format."""
     if isinstance(raw, datetime):
         return raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
     if isinstance(raw, (int, float)):
         return datetime.fromtimestamp(raw, tz=UTC)
-    if isinstance(raw, str) and raw.strip():
+    if isinstance(raw, str):
         val = raw.strip()
-        val = val[:-1] + "+00:00" if val.endswith("Z") else val
-        try:
-            dt = datetime.fromisoformat(val)
-            return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
-        except ValueError:
-            return None
-    return None
+        if not val:
+            raise ValueError("Empty timestamp string")
+        if val.endswith("Z"):
+            val = val[:-1] + "+00:00"
+        dt = datetime.fromisoformat(val)
+        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+    raise TypeError(f"Unsupported timestamp type: {type(raw)}")
