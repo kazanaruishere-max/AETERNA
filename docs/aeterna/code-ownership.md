@@ -27,8 +27,10 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/runtime/loop_b.py` | Evaluasi bar M15 tertutup menjadi observasi sinyal virtual deterministik | `aeterna-strategy` | OMP | A | `tests/runtime/test_loop_b.py` |
 | `engine/runtime/virtual_tracker.py` | Penilaian outcome virtual 5 lapis exit tanpa eksekusi dana riil | `aeterna-backtest` | OMP | A | `tests/runtime/test_virtual_tracker.py` |
 | `engine/runtime/dashboard.py` | Formatter observasi internal admin-only yang patuh batas publikasi | `aeterna-architect` | OMP | A | `tests/runtime/test_runtime_service.py` |
+| `engine/runtime/bootstrap.py` | Komposisi dependensi runtime signal-only dan factory bundle immutable | `aeterna-architect` | OMP | A | `uv run pytest tests/e2e/test_runtime_bootstrap_e2e.py -v` |
 | `engine/runtime/runtime_service.py` | Orkestrasi siklus hidup tri-loop dan tracker tanpa order riil | `aeterna-lead` | OMP | A | `tests/runtime/test_runtime_service.py` |
 | `tests/runtime/` | Golden test deterministik untuk runtime tri-loop dan virtual journal | `aeterna-verifier` | OMP | A | `uv run pytest tests/runtime/ -v` |
+| `tests/e2e/` | Smoke test integrasi end-to-end tri-loop runtime deterministik | `aeterna-verifier` | OMP | A | `uv run pytest tests/e2e/ -v` |
 | `engine/monitoring/` | Daily reporting metrics, audit trail, dump Parquet | `aeterna-architect` | OMP | B | `TEST-DB-*` |
 | `db/` | Canonical DDL SQLite WAL schema (SSoT untuk Python & Go) | `aeterna-architect` | Lead / OMP | A | `test_canonical_schema_file_on_disk` |
 | `instruments/xauusd/config/` | Starting parameters YAML XAUUSD v1.0 (read-only config) | `aeterna-strategy` | OMP | A | Schema validation test |
