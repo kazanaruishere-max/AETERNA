@@ -229,3 +229,229 @@ async def test_publish_once_per_signal_id() -> None:
     # Second poll: record is still in DB, but must be skipped due to deduplication
     await service._poll_and_publish_once()
     assert mock_client.send.call_count == 1
+
+
+def test_publish_with_chart_rejects_non_admin_chat_id() -> None:
+    """publish_with_chart must silently reject any non-whitelisted/mismatching chat ID."""
+    mock_client = MagicMock()
+    mock_client.send_photo.return_value = True
+
+    admin_chat_id = 123456789
+    dashboard = SignalOnlyDashboard(client=mock_client, admin_chat_id=admin_chat_id)
+    card = _create_sample_card()
+    dummy_photo = b"\x89PNG\r\n\x1a\nfake_image_bytes"
+
+    # 1. Non-admin chat ID rejected
+    unauthorized_chat_id = 987654321
+    result = dashboard.publish_with_chart(
+        card, photo=dummy_photo, chat_id=unauthorized_chat_id
+    )
+    assert result is False
+    mock_client.send_photo.assert_not_called()
+
+    # 2. Authorized admin chat ID accepted
+    result_admin = dashboard.publish_with_chart(
+        card, photo=dummy_photo, chat_id=admin_chat_id
+    )
+    assert result_admin is True
+    mock_client.send_photo.assert_called_once()
+    called_chat_id, called_photo, called_caption = mock_client.send_photo.call_args[0]
+    assert called_chat_id == admin_chat_id
+    assert called_photo == dummy_photo
+    assert "OBSERVATION" in called_caption
+
+
+def test_publish_with_chart_default_admin_chat_id() -> None:
+    """publish_with_chart with chat_id=None must deliver to default admin_chat_id."""
+    mock_client = MagicMock()
+    mock_client.send_photo.return_value = True
+
+    admin_chat_id = 123456789
+    dashboard = SignalOnlyDashboard(client=mock_client, admin_chat_id=admin_chat_id)
+    card = _create_sample_card()
+    dummy_photo = b"png_data"
+
+    result = dashboard.publish_with_chart(card, photo=dummy_photo)
+    assert result is True
+    mock_client.send_photo.assert_called_once()
+    called_chat_id, called_photo, called_caption = mock_client.send_photo.call_args[0]
+    assert called_chat_id == admin_chat_id
+    assert called_photo == dummy_photo
+    assert "OBSERVATION" in called_caption
+    assert "REASONING" in called_caption
+
+
+def test_publish_with_chart_caption_contains_reasoning_and_card_details() -> None:
+    """publish_with_chart caption must format ObservationCard + deterministic reasoning."""
+    mock_client = MagicMock()
+    mock_client.send_photo.return_value = True
+
+    admin_chat_id = 123456789
+    dashboard = SignalOnlyDashboard(
+        client=mock_client,
+        admin_chat_id=admin_chat_id,
+        reasoning_enabled=True,
+    )
+    card = _create_sample_card(regime_bias="BULLISH_TREND")
+    dummy_photo = b"png_payload"
+
+    result = dashboard.publish_with_chart(card, photo=dummy_photo)
+    assert result is True
+    assert mock_client.send_photo.call_count == 1
+    _, _, caption = mock_client.send_photo.call_args[0]
+
+    # Required card structural labels
+    for label in (
+        "OBSERVATION",
+        "BIAS",
+        "ZONA",
+        "INVALIDASI",
+        "LIQUIDITY",
+        "REASONING",
+    ):
+        assert label in caption
+
+    # Deterministic reasoning elements
+    assert "REGIME=" in caption
+    assert "STRATEGY=" in caption
+    assert "RR=" in caption
+    assert "STATE=" in caption
+    assert "NEWS=" in caption
+    assert "SPREAD_Z=" in caption
+
+
+@pytest.mark.parametrize(
+    "forbidden_token",
+    [
+        "BUY sekarang",
+        "SELL sekarang",
+        "buy now",
+        "sell now",
+        "0.01 lot",
+        "lots",
+        "equity",
+        "balance",
+        "ticket",
+        "server",
+        "profit",
+        "win rate: 80%",
+        "garansi",
+        "pastikan untung",
+    ],
+)
+def test_publish_with_chart_rejects_forbidden_tokens(forbidden_token: str) -> None:
+    """publish_with_chart must raise ValueError and drop publish when card has forbidden tokens."""
+    mock_client = MagicMock()
+    dashboard = SignalOnlyDashboard(client=mock_client, admin_chat_id=123456789)
+    card = _create_sample_card(regime_bias=f"BIAS_{forbidden_token}")
+    dummy_photo = b"png_bytes"
+
+    with pytest.raises(ValueError):
+        dashboard.publish_with_chart(card, photo=dummy_photo)
+    mock_client.send_photo.assert_not_called()
+
+
+def test_publish_with_chart_transport_error_does_not_crash() -> None:
+    """publish_with_chart must catch transport errors and return False gracefully."""
+    mock_client = MagicMock()
+    mock_client.send_photo.side_effect = ConnectionError("Telegram network timeout")
+
+    dashboard = SignalOnlyDashboard(client=mock_client, admin_chat_id=123456789)
+    card = _create_sample_card()
+    dummy_photo = b"png_bytes"
+
+    result = dashboard.publish_with_chart(card, photo=dummy_photo)
+    assert result is False
+    mock_client.send_photo.assert_called_once()
+
+
+def test_telegram_control_bot_send_photo_admin_only() -> None:
+    """TelegramControlBot.send_photo must reject non-admin and send multipart to admin."""
+    from engine.telegram_bot.client import TelegramControlBot
+    from engine.telegram_bot.interfaces import (
+        AdminAuthenticator,
+        NonceManager,
+        TwoStepController,
+    )
+    from engine.telegram_bot.types import AuthResult
+
+    admin_id = 123456789
+    authenticator = MagicMock(spec=AdminAuthenticator)
+
+    def _auth(user_id: int) -> AuthResult:
+        if user_id == admin_id:
+            return AuthResult(allowed=True, user_id=user_id, reason="OK")
+        return AuthResult(
+            allowed=False, user_id=user_id, reason="UNAUTHORIZED_USER_SILENT_DROP"
+        )
+
+    authenticator.authenticate.side_effect = _auth
+
+    session_mock = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"ok": True, "result": {"message_id": 999}}
+    session_mock.post.return_value = mock_response
+
+    bot = TelegramControlBot(
+        token="test-bot-token",
+        authenticator=authenticator,
+        nonce_manager=MagicMock(spec=NonceManager),
+        two_step=MagicMock(spec=TwoStepController),
+        session=session_mock,
+    )
+
+    photo_bytes = b"\x89PNG\r\n\x1a\nfake_image"
+    caption_text = "Test observation caption"
+
+    # 1. Non-admin chat ID is rejected before any HTTP call
+    assert (
+        bot.send_photo(chat_id=987654321, photo=photo_bytes, caption=caption_text)
+        is False
+    )
+    session_mock.post.assert_not_called()
+
+    # 2. Admin chat ID sends multipart POST
+    assert (
+        bot.send_photo(chat_id=admin_id, photo=photo_bytes, caption=caption_text)
+        is True
+    )
+    assert session_mock.post.call_count == 1
+    call_args = session_mock.post.call_args
+    assert "sendPhoto" in call_args[0][0]
+    assert call_args[1]["data"]["chat_id"] == str(admin_id)
+    assert call_args[1]["data"]["caption"] == caption_text
+    assert "photo" in call_args[1]["files"]
+
+
+def test_telegram_control_bot_send_photo_transport_error() -> None:
+    """TelegramControlBot.send_photo must return False on HTTP / transport error without crashing."""
+    import requests
+
+    from engine.telegram_bot.client import TelegramControlBot
+    from engine.telegram_bot.interfaces import (
+        AdminAuthenticator,
+        NonceManager,
+        TwoStepController,
+    )
+    from engine.telegram_bot.types import AuthResult
+
+    admin_id = 123456789
+    authenticator = MagicMock(spec=AdminAuthenticator)
+    authenticator.authenticate.return_value = AuthResult(
+        allowed=True, user_id=admin_id, reason="OK"
+    )
+
+    session_mock = MagicMock()
+    session_mock.post.side_effect = requests.RequestException("Network dropped")
+
+    bot = TelegramControlBot(
+        token="test-bot-token",
+        authenticator=authenticator,
+        nonce_manager=MagicMock(spec=NonceManager),
+        two_step=MagicMock(spec=TwoStepController),
+        session=session_mock,
+    )
+
+    result = bot.send_photo(chat_id=admin_id, photo=b"photo_data", caption="caption")
+    assert result is False

@@ -231,6 +231,35 @@ class TelegramControlBot:
             logger.warning("Telegram %s failed: %s", method, type(exc).__name__)
             return False
 
+    def send_photo(self, chat_id: int, photo: bytes, caption: str) -> bool:
+        """Send photo via Telegram Bot API sendPhoto multipart/form-data.
+
+        Enforces admin-only authentication guard (REQ-TEL-001) and returns False
+        on non-admin recipient or transport error without leaking secrets.
+        """
+        auth = self._authenticator.authenticate(chat_id)
+        if not auth.allowed:
+            logger.warning(
+                "Telegram sendPhoto dropped: chat_id=%s reason=%s",
+                chat_id,
+                auth.reason,
+            )
+            return False
+
+        url = self._api_url("sendPhoto")
+        data = {"chat_id": str(chat_id), "caption": caption}
+        files = {"photo": ("observation_chart.png", photo, "image/png")}
+        try:
+            response = self._session.post(
+                url, data=data, files=files, timeout=self._timeout
+            )
+            return response.status_code == 200 and bool(
+                response.json().get("ok", False)
+            )
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("Telegram sendPhoto failed: %s", type(exc).__name__)
+            return False
+
     def push_dashboard(self, chat_id: int) -> bool:
         """Proactively send the /menu dashboard (startup notice, no prior user message)."""
         return self.send_initial_dashboard(chat_id)

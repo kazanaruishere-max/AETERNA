@@ -47,6 +47,10 @@ class TelegramTransport(Protocol):
         """Send payload to Telegram Bot API."""
         ...
 
+    def send_photo(self, chat_id: int, photo: bytes, caption: str) -> bool:
+        """Send photo with caption to Telegram Bot API."""
+        ...
+
 
 @dataclass(frozen=True)
 class ObservationCard:
@@ -208,6 +212,46 @@ class SignalOnlyDashboard:
             return bool(self.client.send(payload))
         except (ValueError, TypeError, OSError):
             logger.exception("Client send failed for observation card")
+            return False
+
+    def publish_with_chart(
+        self,
+        card: ObservationCard,
+        photo: bytes,
+        chat_id: int | None = None,
+    ) -> bool:
+        """Publish card with observation chart to admin_chat_id only (REQ-RUNTIME-005, REQ-TEL-001)."""
+        target_chat_id = self.admin_chat_id if chat_id is None else chat_id
+        if target_chat_id != self.admin_chat_id:
+            logger.warning(
+                "Rejected publish_with_chart attempt to non-admin chat_id=%s (admin=%s)",
+                target_chat_id,
+                self.admin_chat_id,
+            )
+            return False
+
+        effective_card = card
+        if self.reasoning_enabled and not effective_card.reasoning:
+            effective_card = self._attach_reasoning(card)
+
+        try:
+            caption = format_observation_card(effective_card)
+        except (ValueError, TypeError, OSError):
+            logger.exception("Failed formatting observation card: %s", effective_card)
+            raise
+
+        try:
+            if hasattr(self.client, "send_photo"):
+                return bool(self.client.send_photo(self.admin_chat_id, photo, caption))
+            payload = {
+                "method": "sendPhoto",
+                "chat_id": self.admin_chat_id,
+                "photo": photo,
+                "caption": caption,
+            }
+            return bool(self.client.send(payload))
+        except (ValueError, TypeError, OSError, RuntimeError):
+            logger.exception("Client send_photo failed for observation chart")
             return False
 
     def _attach_reasoning(self, card: ObservationCard) -> ObservationCard:
