@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from engine.analysis_engine.python.types import CandleDict
+from engine.runtime.chart_snapshot import render_ohlc_png
 from engine.runtime.dashboard import ObservationCard, SignalOnlyDashboard
 
 logger = logging.getLogger("aeterna.runtime.runtime_service")
@@ -31,6 +34,7 @@ class RuntimeService:
         db_manager: Any,
         symbol: str = "XAUUSDm",
         publish_interval_seconds: float = 5.0,
+        chart_candle_provider: Callable[[int], list[CandleDict]] | None = None,
     ) -> None:
         self.loop_a = loop_a
         self.loop_b = loop_b
@@ -39,6 +43,7 @@ class RuntimeService:
         self.db_manager = db_manager
         self.symbol = symbol
         self.publish_interval_seconds = float(publish_interval_seconds)
+        self.chart_candle_provider = chart_candle_provider
         self._published_signal_ids: set[str] = set()
 
     async def run_forever(self, stop_event: asyncio.Event) -> None:
@@ -106,9 +111,38 @@ class RuntimeService:
                 continue
 
             card = self._create_card_from_record(record)
-            success = self.dashboard.publish(card)
+            success = self._publish_card_with_optional_chart(card, record.bar_ts)
             if success:
                 self._published_signal_ids.add(record.signal_id)
+
+    def _publish_card_with_optional_chart(
+        self, card: ObservationCard, bar_ts: int
+    ) -> bool:
+        """Publish observation card with rendered OHLC chart if available, else text."""
+        candles: list[CandleDict] = []
+        if self.chart_candle_provider is not None:
+            try:
+                candles = self.chart_candle_provider(bar_ts) or []
+            except Exception:
+                logger.exception("chart_candle_provider failed for bar_ts=%d", bar_ts)
+                candles = []
+
+        if not candles:
+            logger.info("CHART_UNAVAILABLE=FALLBACK_TEXT")
+            return self.dashboard.publish(card)
+
+        try:
+            png_bytes = render_ohlc_png(
+                candles,
+                zone_low=card.zone_low,
+                zone_high=card.zone_high,
+                invalidation_level=card.invalidation_level,
+            )
+            return self.dashboard.publish_with_chart(card, png_bytes)
+        except Exception:
+            logger.exception("Chart rendering failed; falling back to text")
+            logger.info("CHART_UNAVAILABLE=FALLBACK_TEXT")
+            return self.dashboard.publish(card)
 
     def _create_card_from_record(self, record: Any) -> ObservationCard:
         """Map a SignalObservationRecord into an admin ObservationCard."""
