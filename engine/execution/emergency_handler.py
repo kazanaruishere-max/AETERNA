@@ -249,8 +249,10 @@ class EmergencyHandler(ExecutionEmergencyHandler):
             peak = self.peak_equity
 
         drawdown_pct = 0.0
-        if peak > 0.0 and current_equity < peak:
+        if equity_source != "UNAVAILABLE" and peak > 0.0 and current_equity < peak:
             drawdown_pct = round(((peak - current_equity) / peak) * 100.0, 4)
+        elif equity_source == "UNAVAILABLE":
+            logger.warning("Equity source UNAVAILABLE; skipping drawdown calculation (drawdown_pct=0.0)")
 
         payload.update({
             "peak_equity": round(peak, 2),
@@ -261,8 +263,8 @@ class EmergencyHandler(ExecutionEmergencyHandler):
         self._write_lockfile(payload)
 
         if not self.set_system_state_paused():
-            logger.error(
-                "Killswitch lockfile written, but failed to transition system state to PAUSED in database"
+            logger.warning(
+                "Killswitch lockfile written, but failed to transition system state to PAUSED in database (partial state)"
             )
         return True
 

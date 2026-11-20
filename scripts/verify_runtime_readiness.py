@@ -30,9 +30,19 @@ from engine.runtime.chart_snapshot import render_ohlc_png
 from engine.runtime.dashboard import ObservationCard, SignalOnlyDashboard
 
 PROHIBITED_TOKENS: tuple[str, ...] = (
-    "buy sekarang", "sell sekarang", "buy now", "sell now",
-    "win rate", "pastikan untung", "garansi", "profit",
-    "equity", "balance", "ticket", "server", "lot",
+    "buy sekarang",
+    "sell sekarang",
+    "buy now",
+    "sell now",
+    "win rate",
+    "pastikan untung",
+    "garansi",
+    "profit",
+    "equity",
+    "balance",
+    "ticket",
+    "server",
+    "lot",
 )
 
 
@@ -58,24 +68,55 @@ def _run_acceptance_suite(repo_root: Path) -> tuple[bool, list[dict[str, Any]]]:
     """Run all mandatory acceptance commands and record raw exit codes and outputs."""
     env = dict(os.environ, PYO3_PYTHON=sys.executable)
     commands: list[tuple[str, list[str], Path, dict[str, str] | None]] = [
-        ("uv run pytest tests/ -q", ["uv", "run", "pytest", "tests/", "-q"], repo_root, None),
-        ("uv run pytest tests/e2e/test_runtime_bootstrap_e2e.py -v", ["uv", "run", "pytest", "tests/e2e/test_runtime_bootstrap_e2e.py", "-v"], repo_root, None),
-        ("uv run pytest tests/test_emergency_handler.py -v", ["uv", "run", "pytest", "tests/test_emergency_handler.py", "-v"], repo_root, None),
+        (
+            "uv run pytest tests/ -q",
+            ["uv", "run", "pytest", "tests/", "-q"],
+            repo_root,
+            None,
+        ),
+        (
+            "uv run pytest tests/e2e/test_runtime_bootstrap_e2e.py -v",
+            ["uv", "run", "pytest", "tests/e2e/test_runtime_bootstrap_e2e.py", "-v"],
+            repo_root,
+            None,
+        ),
+        (
+            "uv run pytest tests/test_emergency_handler.py -v",
+            ["uv", "run", "pytest", "tests/test_emergency_handler.py", "-v"],
+            repo_root,
+            None,
+        ),
         ("uv run ruff check .", ["uv", "run", "ruff", "check", "."], repo_root, None),
         ("uv run pyright", ["uv", "run", "pyright"], repo_root, None),
-        ("go test -count=1 ./...", ["go", "test", "-count=1", "./..."], repo_root / "engine" / "watchdog", None),
-        ("cargo test --all", ["cargo", "test", "--all"], repo_root / "engine" / "analysis_engine" / "rust", env),
+        (
+            "go test -count=1 ./...",
+            ["go", "test", "-count=1", "./..."],
+            repo_root / "engine" / "watchdog",
+            None,
+        ),
+        (
+            "cargo test --all",
+            ["cargo", "test", "--all"],
+            repo_root / "engine" / "analysis_engine" / "rust",
+            env,
+        ),
         ("git diff --check", ["git", "diff", "--check"], repo_root, None),
     ]
     results: list[dict[str, Any]] = []
     all_passed = True
     for name, cmd, cwd, c_env in commands:
         code, out, err, sec = _run_cmd(cmd, cwd=cwd, env=c_env)
-        passed = (code == 0)
-        results.append({
-            "command": name, "exit_code": code, "stdout": out,
-            "stderr": err, "duration_sec": round(sec, 2), "passed": passed,
-        })
+        passed = code == 0
+        results.append(
+            {
+                "command": name,
+                "exit_code": code,
+                "stdout": out,
+                "stderr": err,
+                "duration_sec": round(sec, 2),
+                "passed": passed,
+            }
+        )
         if not passed:
             all_passed = False
             break
@@ -98,7 +139,9 @@ def _init_dummy_db(db_path: Path, schema_path: Path) -> None:
         conn.commit()
 
 
-def _http_request(url: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _http_request(
+    url: str, method: str = "GET", payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Execute synchronous localhost HTTP request returning parsed JSON payload."""
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {"Content-Type": "application/json"} if data else {}
@@ -122,65 +165,190 @@ def _wait_for_watchdog(url: str, timeout_sec: float = 8.0) -> dict[str, Any]:
 
 def _build_watchdog_binary(repo_root: Path, bin_path: Path) -> None:
     """Compile Go watchdog binary into temporary destination."""
-    code, out, err, _ = _run_cmd(["go", "build", "-o", str(bin_path), "."], cwd=repo_root / "engine" / "watchdog")
+    code, out, err, _ = _run_cmd(
+        ["go", "build", "-o", str(bin_path), "."], cwd=repo_root / "engine" / "watchdog"
+    )
     if code != 0:
         raise RuntimeError(f"Failed to build watchdog binary: {err or out}")
 
 
+def _validate_lockfile_payload(payload: dict[str, Any]) -> None:
+    """Validate lockfile payload schema and reject fabricated financial metrics."""
+    for f in (
+        "timestamp_utc",
+        "trigger_reason",
+        "peak_equity",
+        "current_equity",
+        "drawdown_pct",
+    ):
+        if f not in payload:
+            raise AssertionError(f"Missing required lockfile field: {f}")
+    if payload.get("equity_source") == "UNAVAILABLE":
+        if payload.get("drawdown_pct") != 0.0:
+            raise AssertionError(
+                f"Fabricated drawdown detected: equity_source=UNAVAILABLE but drawdown_pct={payload.get('drawdown_pct')}"
+            )
+        if payload.get("current_equity") != 0.0:
+            raise AssertionError(f"Fabricated equity detected: {payload}")
+
+
+def _verify_killswitch_db_available(
+    db_path: Path, lockfile_path: Path
+) -> dict[str, Any]:
+    """Verify DB-available scenario: persists PAUSED in DB and sets handler.is_paused=True."""
+    from engine.shared.db.database import DatabaseManager
+
+    db_mgr = DatabaseManager(db_path=str(db_path))
+    db_mgr.init_db()
+
+    handler = EmergencyHandler(
+        db_manager=db_mgr,
+        lockfile_path=lockfile_path,
+        peak_equity=1000.0,
+    )
+
+    if not handler.execute_emergency_killswitch() or not lockfile_path.exists():
+        raise RuntimeError(
+            "EmergencyHandler failed to write lockfile in DB-available scenario"
+        )
+
+    if not handler.is_paused:
+        raise AssertionError("Expected handler.is_paused=True when DB is available")
+
+    state_rec = db_mgr.get_system_state()
+    if state_rec is None or state_rec.state != "PAUSED":
+        raise AssertionError(f"Expected DB state PAUSED, got: {state_rec}")
+
+    payload = json.loads(lockfile_path.read_text(encoding="utf-8"))
+    _validate_lockfile_payload(payload)
+
+    return {
+        "status": "PASS",
+        "system_state": state_rec.state,
+        "is_paused": handler.is_paused,
+        "payload": payload,
+    }
+
+
+def _verify_killswitch_db_failed(lockfile_path: Path) -> dict[str, Any]:
+    """Verify DB-failed scenario: lockfile written fail-closed, reported as PARTIAL/WARN."""
+    handler = EmergencyHandler(
+        lockfile_path=lockfile_path,
+        db_manager="DB_INIT_FAILED",
+        peak_equity=1000.0,
+    )
+
+    if not handler.execute_emergency_killswitch() or not lockfile_path.exists():
+        raise RuntimeError(
+            "EmergencyHandler failed to write lockfile in DB-failed scenario"
+        )
+
+    payload = json.loads(lockfile_path.read_text(encoding="utf-8"))
+    _validate_lockfile_payload(payload)
+
+    if handler.is_paused:
+        raise AssertionError(
+            "handler.is_paused must remain False when DB repository fails"
+        )
+
+    return {
+        "status": "PARTIAL/WARN",
+        "lockfile_written": True,
+        "db_persisted": False,
+        "is_paused": handler.is_paused,
+        "payload": payload,
+        "note": "Lockfile written fail-closed, DB state update skipped (DB unavailable)",
+    }
+
+
+def _stop_dummy_watchdog(proc: subprocess.Popen[bytes]) -> int:
+    """Safely terminate dummy watchdog process and return actual exit code."""
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2.0)
+    return proc.returncode if proc.returncode is not None else -1
+
+
 def _verify_dummy_watchdog(repo_root: Path, tmp_dir: Path) -> dict[str, Any]:
     """Run full dummy E2E test verifying order gating before and after killswitch."""
-    data_dir, logs_dir = tmp_dir / "data", tmp_dir / "logs"
+    data_dir = tmp_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    db_path, pid_path = data_dir / "trading.db", data_dir / "python_engine.pid"
+    (tmp_dir / "logs").mkdir(parents=True, exist_ok=True)
+    db_path = data_dir / "trading.db"
+    pid_path = data_dir / "python_engine.pid"
     lockfile_path = data_dir / "EMERGENCY_KILLSWITCH.lock"
     bin_name = "watchdog.exe" if sys.platform == "win32" else "watchdog"
     bin_path = tmp_dir / bin_name
 
     _init_dummy_db(db_path, repo_root / "db" / "schema.sql")
-    pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    pid_path.write_text("999999\n", encoding="utf-8")
     _build_watchdog_binary(repo_root, bin_path)
 
-    cmd = [str(bin_path), "-bind", "127.0.0.1:20130", "-db", str(db_path), "-pid-file", str(pid_path)]
-    proc = subprocess.Popen(cmd, cwd=str(tmp_dir), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    cmd = [
+        str(bin_path),
+        "-bind",
+        "127.0.0.1:20130",
+        "-db",
+        str(db_path),
+        "-pid-file",
+        str(pid_path),
+    ]
+    proc = subprocess.Popen(
+        cmd, cwd=str(tmp_dir), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    res: dict[str, Any] = {}
     try:
         status_init = _wait_for_watchdog("http://127.0.0.1:20130/v1/status")
-        order = {"pair": "XAUUSDm", "direction": "BUY", "lot_size": 0.01, "entry_price": 2000.0, "sl_price": 1995.0, "account_equity": 1000.0}
-        res_before = _http_request("http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order)
+        order = {
+            "pair": "XAUUSDm",
+            "direction": "BUY",
+            "lot_size": 0.01,
+            "entry_price": 2000.0,
+            "sl_price": 1995.0,
+            "account_equity": 1000.0,
+        }
+        res_before = _http_request(
+            "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
+        )
         if not res_before.get("allowed"):
-            raise AssertionError(f"Expected order allowed before killswitch: {res_before}")
+            raise AssertionError(
+                f"Expected order allowed before killswitch: {res_before}"
+            )
 
-        handler = EmergencyHandler(lockfile_path=lockfile_path, db_manager="DB_INIT_FAILED", peak_equity=1000.0)
-        if not handler.execute_emergency_killswitch() or not lockfile_path.exists():
-            raise RuntimeError("EmergencyHandler failed to write killswitch lockfile")
-
-        payload = json.loads(lockfile_path.read_text(encoding="utf-8"))
-        for f in ("timestamp_utc", "trigger_reason", "peak_equity", "current_equity", "drawdown_pct"):
-            if f not in payload:
-                raise AssertionError(f"Missing required lockfile field: {f}")
-        if payload.get("equity_source") == "UNAVAILABLE" and payload.get("current_equity") != 0.0:
-            raise AssertionError(f"Fabricated equity detected: {payload}")
-
-        res_after = _http_request("http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order)
-        if res_after.get("allowed") or res_after.get("reason") != "circuit_breaker_lock_active":
+        db_failed_summary = _verify_killswitch_db_failed(lockfile_path)
+        res_after = _http_request(
+            "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
+        )
+        if (
+            res_after.get("allowed")
+            or res_after.get("reason") != "circuit_breaker_lock_active"
+        ):
             raise AssertionError(f"Expected circuit_breaker_lock_active: {res_after}")
 
         status_after = _http_request("http://127.0.0.1:20130/v1/status", method="GET")
         if not status_after.get("killswitch_active"):
             raise AssertionError(f"Expected killswitch_active=True: {status_after}")
-        return {
-            "status_init": status_init, "order_before": res_before,
-            "lockfile_payload": payload, "order_after": res_after,
-            "status_after": status_after, "watchdog_pid": proc.pid,
+
+        db_avail_summary = _verify_killswitch_db_available(
+            db_path, data_dir / "AVAIL_KILLSWITCH.lock"
+        )
+        res = {
+            "status_init": status_init,
+            "order_before": res_before,
+            "lockfile_payload": db_failed_summary["payload"],
+            "order_after": res_after,
+            "status_after": status_after,
+            "watchdog_pid": proc.pid,
+            "db_avail": db_avail_summary,
+            "db_failed": db_failed_summary,
         }
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2.0)
+        res["exit_code"] = _stop_dummy_watchdog(proc)
+    return res
 
 
 class _FakeTelegramTransport:
@@ -200,10 +368,19 @@ class _FakeTelegramTransport:
 def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
     """Render synthetic OHLC PNG and verify Telegram dashboard admin publication."""
     candles: list[CandleDict] = [
-        {"timestamp_utc": f"2026-11-20T12:{i*15:02d}:00Z", "open": 2000.0+i, "high": 2005.0+i, "low": 1995.0+i, "close": 2002.0+i, "tick_volume": 100}
+        {
+            "timestamp_utc": f"2026-11-20T12:{i * 15:02d}:00Z",
+            "open": 2000.0 + i,
+            "high": 2005.0 + i,
+            "low": 1995.0 + i,
+            "close": 2002.0 + i,
+            "tick_volume": 100,
+        }
         for i in range(10)
     ]
-    png = render_ohlc_png(candles, zone_low=1995.0, zone_high=2008.0, invalidation_level=1990.0)
+    png = render_ohlc_png(
+        candles, zone_low=1995.0, zone_high=2008.0, invalidation_level=1990.0
+    )
     if not png.startswith(b"\x89PNG\r\n\x1a\n"):
         raise AssertionError("Missing PNG magic header")
     for chunk in (b"IHDR", b"IDAT", b"IEND", b"XAUUSD OBSERVATION"):
@@ -211,14 +388,31 @@ def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
             raise AssertionError(f"Missing required marker {chunk!r}")
 
     admin_id, fake = 999_000_001, _FakeTelegramTransport()
-    dash = SignalOnlyDashboard(client=fake, admin_chat_id=admin_id, reasoning_enabled=False)
-    card = ObservationCard(
-        timestamp_utc="2026-11-20T12:00:00Z", symbol="XAUUSDm", regime_bias="RANGE_BOUND",
-        zone_low=1995.0, zone_high=2008.0, invalidation_level=1990.0, liquidity_state="NORMAL",
-        blackout_window=None, sample_count=10,
-        reasoning=("REGIME=RANGE_BOUND", "STRATEGY=volatility_breakout", "RR=2.00", "STATE=NORMAL", "NEWS=CLEAR"),
+    dash = SignalOnlyDashboard(
+        client=fake, admin_chat_id=admin_id, reasoning_enabled=False
     )
-    if not dash.publish_with_chart(card, photo=png, chat_id=admin_id) or len(fake.photos) != 1:
+    card = ObservationCard(
+        timestamp_utc="2026-11-20T12:00:00Z",
+        symbol="XAUUSDm",
+        regime_bias="RANGE_BOUND",
+        zone_low=1995.0,
+        zone_high=2008.0,
+        invalidation_level=1990.0,
+        liquidity_state="NORMAL",
+        blackout_window=None,
+        sample_count=10,
+        reasoning=(
+            "REGIME=RANGE_BOUND",
+            "STRATEGY=volatility_breakout",
+            "RR=2.00",
+            "STATE=NORMAL",
+            "NEWS=CLEAR",
+        ),
+    )
+    if (
+        not dash.publish_with_chart(card, photo=png, chat_id=admin_id)
+        or len(fake.photos) != 1
+    ):
         raise RuntimeError("Failed to publish chart to admin_chat_id")
     cid, sent_photo, caption = fake.photos[0]
     if cid != admin_id or sent_photo != png:
@@ -228,8 +422,14 @@ def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
     lower_caption = caption.lower()
     for tok in PROHIBITED_TOKENS:
         if tok in lower_caption:
-            raise AssertionError(f"Prohibited financial token {tok!r} detected in caption")
-    return {"admin_chat_id": admin_id, "photo_bytes_len": len(png), "caption_length": len(caption)}
+            raise AssertionError(
+                f"Prohibited financial token {tok!r} detected in caption"
+            )
+    return {
+        "admin_chat_id": admin_id,
+        "photo_bytes_len": len(png),
+        "caption_length": len(caption),
+    }
 
 
 def _build_markdown_report(
@@ -252,26 +452,41 @@ def _build_markdown_report(
     ]
     for it in acceptance_results:
         tag = "PASS" if it["passed"] else "**FAIL**"
-        lines.append(f"| `{it['command']}` | `{it['exit_code']}` | {it['duration_sec']} | {tag} |")
+        lines.append(
+            f"| `{it['command']}` | `{it['exit_code']}` | {it['duration_sec']} | {tag} |"
+        )
     lines.append("\n## 2. Dummy Watchdog Fail-Closed E2E\n")
     if watchdog_summary is not None:
-        lines.extend([
-            f"- Watchdog Process: PID `{watchdog_summary['watchdog_pid']}` (terminated cleanly)",
-            f"- Pre-Killswitch Order Check: `allowed={watchdog_summary['order_before'].get('allowed')}` (reason: `{watchdog_summary['order_before'].get('reason')}`)",
-            f"- Emergency Lockfile Payload: `{json.dumps(watchdog_summary['lockfile_payload'])}`",
-            f"- Post-Killswitch Order Check: `allowed={watchdog_summary['order_after'].get('allowed')}` (reason: `{watchdog_summary['order_after'].get('reason')}`)",
-            f"- Post-Killswitch Daemon Health: `killswitch_active={watchdog_summary['status_after'].get('killswitch_active')}`",
-        ])
+        exit_code_str = f"exit_code={watchdog_summary.get('exit_code', 0)}"
+        lines.extend(
+            [
+                f"- Watchdog Process: PID `{watchdog_summary['watchdog_pid']}` ({exit_code_str})",
+                f"- Pre-Killswitch Order Check: `allowed={watchdog_summary['order_before'].get('allowed')}` (reason: `{watchdog_summary['order_before'].get('reason')}`)",
+                f"- Emergency Lockfile Payload: `{json.dumps(watchdog_summary['lockfile_payload'])}`",
+                f"- Post-Killswitch Order Check: `allowed={watchdog_summary['order_after'].get('allowed')}` (reason: `{watchdog_summary['order_after'].get('reason')}`)",
+                f"- Post-Killswitch Daemon Health: `killswitch_active={watchdog_summary['status_after'].get('killswitch_active')}`",
+            ]
+        )
+        if "db_avail" in watchdog_summary:
+            lines.append(
+                f"- DB Available Persistence: `system_state={watchdog_summary['db_avail'].get('system_state')}`, `handler.is_paused={watchdog_summary['db_avail'].get('is_paused')}` (Status: PASS)"
+            )
+        if "db_failed" in watchdog_summary:
+            lines.append(
+                f"- DB Failed Persistence: `lockfile_written={watchdog_summary['db_failed'].get('lockfile_written')}`, `db_persisted={watchdog_summary['db_failed'].get('db_persisted')}` (Status: PARTIAL/WARN - fallback degraded)"
+            )
     else:
         lines.append("- *Watchdog E2E skipped or failed prior to completion.*")
     lines.append("\n## 3. Dummy Chart & Admin Observation Card\n")
     if chart_summary is not None:
-        lines.extend([
-            f"- Rendered PNG Size: `{chart_summary['photo_bytes_len']}` bytes with verified magic and metadata title",
-            f"- Admin Transport Delivery: Sent to whitelist chat ID `{chart_summary['admin_chat_id']}`",
-            "- Admin Whitelist Security: Non-admin publish attempt strictly rejected",
-            "- Caption Purity: All financial and trading instruction tokens confirmed absent",
-        ])
+        lines.extend(
+            [
+                f"- Rendered PNG Size: `{chart_summary['photo_bytes_len']}` bytes with verified magic and metadata title",
+                f"- Admin Transport Delivery: Sent to whitelist chat ID `{chart_summary['admin_chat_id']}`",
+                "- Admin Whitelist Security: Non-admin publish attempt strictly rejected",
+                "- Caption Purity: All financial and trading instruction tokens confirmed absent",
+            ]
+        )
     else:
         lines.append("- *Chart verification skipped or failed prior to completion.*")
     lines.extend(["\n## 4. Verdict Summary\n", f"**`{verdict}`**\n"])
@@ -280,12 +495,24 @@ def _build_markdown_report(
 
 def main(argv: list[str] | None = None) -> int:
     """Parse CLI options, execute verification harness, write report, and exit."""
-    parser = argparse.ArgumentParser(description="AETERNA Runtime Readiness Verification Harness")
-    parser.add_argument("--out", default=".handoff/e2e/AUTO_READINESS-LAST.md", help="Target Markdown report path")
+    parser = argparse.ArgumentParser(
+        description="AETERNA Runtime Readiness Verification Harness"
+    )
+    parser.add_argument(
+        "--out",
+        default=".handoff/e2e/AUTO_READINESS-LAST.md",
+        help="Target Markdown report path",
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent
-    c_res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=False)
+    c_res = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     commit_hash = c_res.stdout.strip() if c_res.returncode == 0 else "UNKNOWN"
 
     watchdog_summary: dict[str, Any] | None = None
@@ -297,12 +524,22 @@ def main(argv: list[str] | None = None) -> int:
             with tempfile.TemporaryDirectory() as tmp_str:
                 watchdog_summary = _verify_dummy_watchdog(repo_root, Path(tmp_str))
             chart_summary = _verify_dummy_chart_and_dashboard()
-        except (RuntimeError, OSError, ValueError, TypeError, AssertionError, sqlite3.Error, TimeoutError) as exc:
+        except (
+            RuntimeError,
+            OSError,
+            ValueError,
+            TypeError,
+            AssertionError,
+            sqlite3.Error,
+            TimeoutError,
+        ) as exc:
             all_passed = False
             sys.stderr.write(f"Readiness verification error: {exc}\n")
 
     verdict = "AUTO_READINESS_PASS" if all_passed else "AUTO_READINESS_FAIL"
-    report = _build_markdown_report(commit_hash, acceptance_results, watchdog_summary, chart_summary, verdict)
+    report = _build_markdown_report(
+        commit_hash, acceptance_results, watchdog_summary, chart_summary, verdict
+    )
 
     out_path = Path(args.out)
     if not out_path.is_absolute():
@@ -310,7 +547,9 @@ def main(argv: list[str] | None = None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
 
-    sys.stdout.write(f"\nRuntime Readiness Verdict: {verdict}\nReport written to: {out_path}\n")
+    sys.stdout.write(
+        f"\nRuntime Readiness Verdict: {verdict}\nReport written to: {out_path}\n"
+    )
     return 0 if all_passed else 1
 
 
