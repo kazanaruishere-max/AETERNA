@@ -1,7 +1,7 @@
 """Unit tests for MQL5 Economic Calendar snapshot loader.
 
 Module: tests.runtime.test_news_sources
-Covers: REQ-RSK-001, REQ-RUNTIME-005
+Covers: REQ-RSK-001, REQ-RUNTIME-005, REQ-RUNTIME-006
 """
 
 from __future__ import annotations
@@ -245,3 +245,72 @@ def test_mql5_export_offset_conversion_plus_7_hours(
 
     assert loaded == [datetime(2026, 11, 20, 13, 30, tzinfo=UTC)]
     assert "NEWS_TIMEZONE_CONVERTED source_timezone=TRADE_SERVER" in caplog.text
+
+
+def test_export_calendar_mql5_source_contract() -> None:
+    """Source-contract test for ea/Scripts/ExportCalendar.mq5.
+
+    Static verification of MQL5 exporter source code contracts without claiming
+    MQL5 compilation. Asserts presence of TimeTradeServer(), TimeGMT(),
+    source_timezone TRADE_SERVER, and server-GMT offset event conversion.
+    """
+    mql5_path = Path(__file__).resolve().parents[2] / "ea" / "Scripts" / "ExportCalendar.mq5"
+    assert mql5_path.is_file(), f"MQL5 source file not found at {mql5_path}"
+
+    source = mql5_path.read_text(encoding="utf-8")
+
+    assert "TimeTradeServer()" in source, "ExportCalendar.mq5 must call TimeTradeServer()"
+    assert "TimeGMT()" in source, "ExportCalendar.mq5 must call TimeGMT()"
+    assert "SOURCE_TIMEZONE" in source, "ExportCalendar.mq5 must define SOURCE_TIMEZONE"
+    assert '"TRADE_SERVER"' in source, "ExportCalendar.mq5 must specify 'TRADE_SERVER'"
+    assert "source_timezone" in source, (
+        "ExportCalendar.mq5 must export source_timezone in JSON output"
+    )
+    assert "now_server - now_gmt" in source, (
+        "ExportCalendar.mq5 must calculate offset as now_server - now_gmt"
+    )
+    assert "values[i].time - offset_seconds" in source, (
+        "ExportCalendar.mq5 must adjust event timestamp by subtracting offset_seconds"
+    )
+
+
+def test_golden_fixture_offset_plus_7_hours_jan_2026(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Golden inline fixture test: 2026-01-01 08:30:00 on offset +7 -> 2026-01-01T01:30:00Z."""
+    # Trade server time: 2026-01-01 08:30:00
+    server_time = datetime(2026, 1, 1, 8, 30, 0, tzinfo=UTC)
+    offset_seconds = 7 * 3600  # +7 hours (25200 s)
+    timestamp_utc_sec = int(server_time.timestamp()) - offset_seconds
+    dt_utc = datetime.fromtimestamp(timestamp_utc_sec, tz=UTC)
+
+    formatted_utc = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert formatted_utc == "2026-01-01T01:30:00Z"
+
+    # Inline JSON snapshot matching MQL5 ExportCalendar output
+    snapshot_json = """{
+  "schema_version": 1,
+  "source": "MQL5_CALENDAR",
+  "source_timezone": "TRADE_SERVER",
+  "exported_at_utc": "2026-01-01T01:00:00Z",
+  "events": [
+    {
+      "id": 501,
+      "event_id": 9001,
+      "name": "US Non-Farm Payrolls",
+      "currency": "USD",
+      "impact": "HIGH",
+      "timestamp_utc": "2026-01-01T01:30:00Z"
+    }
+  ]
+}"""
+    snapshot_file = tmp_path / "calendar_snapshot.json"
+    snapshot_file.write_text(snapshot_json, encoding="utf-8")
+
+    with caplog.at_level(logging.INFO):
+        loaded = load_calendar_snapshot(snapshot_file)
+
+    assert loaded == [datetime(2026, 1, 1, 1, 30, tzinfo=UTC)]
+    assert "NEWS_TIMEZONE_CONVERTED source_timezone=TRADE_SERVER" in caplog.text
+    assert "NEWS_SOURCE=MQL5_SNAPSHOT" in caplog.text
+
