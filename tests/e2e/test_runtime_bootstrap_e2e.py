@@ -258,6 +258,14 @@ async def test_e2e_tick_to_observation_to_admin_publish(tmp_path: Any) -> None:
         text = str(payload.get("text", "")).lower()
         for token in PROHIBITED_TOKENS:
             assert token not in text, f"Prohibited token '{token}' in payload: {text!r}"
+        orig_text = str(payload.get("text", ""))
+        assert "REASONING:" in orig_text
+        assert "REGIME=" in orig_text
+        assert "STRATEGY=" in orig_text
+        assert "RR=" in orig_text
+        assert "STATE=" in orig_text
+        assert "NEWS=" in orig_text
+        assert "SPREAD_Z=" in orig_text
 
 
 # ---------------------------------------------------------------------------
@@ -430,3 +438,135 @@ def test_e2e_regime_source_is_explicit(
             symbol="XAUUSDm",
         )
     assert "REGIME_SOURCE=KRONOS_MEMO" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_e2e_calendar_snapshot_injected_and_reasoning_blackout(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Calendar snapshot injected via bootstrap loads events and wires blackout reasoning."""
+    import json
+    from pathlib import Path
+
+    snapshot_file = Path(tmp_path) / "mql5_calendar.json"
+    snapshot_data = {
+        "schema_version": "1.0",
+        "source": "MQL5_CALENDAR",
+        "exported_at_utc": "2023-11-14T00:00:00Z",
+        "events": [
+            {
+                "event_id": "ev_001",
+                "currency": "USD",
+                "impact": "HIGH",
+                "timestamp_utc": _iso_utc(BAR_TS),
+                "name": "CPI m/m",
+            },
+            {
+                "event_id": "ev_002",
+                "currency": "USD",
+                "impact": "HIGH",
+                "timestamp_utc": _iso_utc(BAR_TS + 7200),
+                "name": "FOMC Statement",
+            },
+        ],
+    }
+    snapshot_file.write_text(json.dumps(snapshot_data), encoding="utf-8")
+
+    sends: list[dict[str, Any]] = []
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot(sends)
+    evaluator = _DeterministicEvaluator(SignalType.BUY)
+    kronos = _FakeKronos("TRENDING_BULLISH")
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.bootstrap"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=str(tmp_path / "trading_snap.db"),
+            symbol="XAUUSDm",
+            strategy_evaluator=evaluator,  # type: ignore[arg-type]
+            kronos_engine=kronos,  # type: ignore[arg-type]
+            calendar_snapshot_path=str(snapshot_file),
+            reasoning_enabled=True,
+            publish_interval_seconds=0.1,
+        )
+
+    assert "NEWS_SOURCE=MQL5_SNAPSHOT" in caplog.text
+    assert "NEWS_EVENT_COUNT=2" in caplog.text
+    assert len(bundle.news_filter.scheduled_events) == 2
+
+    obs = await bundle.loop_b.run_once(BAR_TS)
+    assert obs is not None
+
+    await _run_publish_burst(bundle.runtime)
+    assert len(sends) >= 1
+    for payload in sends:
+        msg = str(payload.get("text", ""))
+        assert "REASONING:" in msg
+        assert "REGIME=TRENDING_BULLISH" in msg
+        assert f"STRATEGY={type(evaluator).__name__}" in msg
+        assert "RR=2.00" in msg
+        assert "STATE=NORMAL" in msg
+        assert "NEWS=BLACKOUT" in msg
+        assert "SPREAD_Z=0.00" in msg
+        msg_lower = msg.lower()
+        for token in PROHIBITED_TOKENS:
+            assert token not in msg_lower, f"Prohibited token '{token}' in msg: {msg!r}"
+
+
+@pytest.mark.asyncio
+async def test_e2e_reasoning_disabled_omits_reasoning(tmp_path: Any) -> None:
+    """When reasoning_enabled=False, published card omits reasoning facts and shows NONE."""
+    sends: list[dict[str, Any]] = []
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot(sends)
+    evaluator = _DeterministicEvaluator(SignalType.BUY)
+    kronos = _FakeKronos("TRENDING_BULLISH")
+
+    bundle = build_runtime_bundle(
+        exness_client=exness,
+        control_bot=control_bot,
+        admin_chat_id=ADMIN_CHAT_ID,
+        db_path=str(tmp_path / "trading_no_reas.db"),
+        symbol="XAUUSDm",
+        strategy_evaluator=evaluator,  # type: ignore[arg-type]
+        kronos_engine=kronos,  # type: ignore[arg-type]
+        reasoning_enabled=False,
+        publish_interval_seconds=0.1,
+    )
+
+    obs = await bundle.loop_b.run_once(BAR_TS)
+    assert obs is not None
+
+    await _run_publish_burst(bundle.runtime)
+    assert len(sends) >= 1
+    for payload in sends:
+        msg = str(payload.get("text", ""))
+        assert "REASONING: NONE" in msg
+        assert "REGIME=" not in msg
+        msg_lower = msg.lower()
+        for token in PROHIBITED_TOKENS:
+            assert token not in msg_lower, f"Prohibited token '{token}' in msg: {msg!r}"
+
+
+def test_e2e_calendar_snapshot_missing_fallback(
+    caplog: pytest.LogCaptureFixture, tmp_path: Any
+) -> None:
+    """Missing snapshot path logs NEWS_SOURCE=NONE and keeps runtime bundle valid."""
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot([])
+    missing_file = str(tmp_path / "does_not_exist.json")
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.bootstrap"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=str(tmp_path / "trading_missing.db"),
+            symbol="XAUUSDm",
+            calendar_snapshot_path=missing_file,
+        )
+
+    assert "NEWS_SOURCE=NONE" in caplog.text
+    assert len(bundle.news_filter.scheduled_events) == 0
