@@ -52,6 +52,10 @@ logger = logging.getLogger("aeterna.runtime.bootstrap")
 
 _REQUIRED_DF_COLUMNS = ["timestamp_utc", "open", "high", "low", "close", "tick_volume"]
 _SPREAD_FILTER_MIN_STD_DEV = 0.5  # ADR-016
+_REGIME_NORMALIZATION: dict[str, str] = {
+    "BULLISH_TRENDING": "TRENDING_BULLISH",
+    "BEARISH_TRENDING": "TRENDING_BEARISH",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +107,43 @@ def _candle_dicts_to_df(candles: list[CandleDict]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Kronos regime memo wrapper
+# ---------------------------------------------------------------------------
+
+
+class _KronosRegimeMemoWrapper:
+    """Memoizes the latest regime inferred by Kronos for downstream consumers."""
+
+    def __init__(
+        self,
+        inner: KronosInferenceEngine,
+        initial_regime: str = "RANGING",
+    ) -> None:
+        self._inner = inner
+        self._last_regime: str = initial_regime
+
+    @property
+    def last_regime(self) -> str:
+        return self._last_regime
+
+    def get_regime(self) -> str:
+        return self._last_regime
+
+    def infer_regime(self, context_candles: list[CandleDict]) -> Any:
+        result = self._inner.infer_regime(context_candles)
+        raw_regime = str(result.regime)
+        normalized = _REGIME_NORMALIZATION.get(raw_regime, raw_regime)
+        self._last_regime = normalized
+        return result
+
+    def validate_context_window(self, candles: list[CandleDict]) -> bool:
+        return self._inner.validate_context_window(candles)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+# ---------------------------------------------------------------------------
 # RuntimeBundle
 # ---------------------------------------------------------------------------
 
@@ -126,6 +167,46 @@ class RuntimeBundle:
 # ---------------------------------------------------------------------------
 
 
+def _build_loops_and_tracker(
+    exness_client: ExnessClient,
+    state_machine: NewsStateMachine,
+    db_manager: DatabaseManager,
+    effective_kronos: KronosInferenceEngine,
+    effective_evaluator: StrategyEvaluator,
+    symbol: str,
+    poll_interval_seconds: float,
+) -> tuple[FastTickLoopA, AnalysisLoopB, VirtualSignalTracker]:
+    """Instantiate Loop A, Loop B, and VirtualSignalTracker with Kronos memo."""
+    m15_event = asyncio.Event()
+    kronos_memo = _KronosRegimeMemoWrapper(effective_kronos)
+    logger.info("REGIME_SOURCE=KRONOS_MEMO")
+
+    loop_a = FastTickLoopA(
+        exness_client=exness_client,
+        state_machine=state_machine,
+        db_manager=db_manager,
+        m15_event=m15_event,
+        symbol=symbol,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    loop_b = AnalysisLoopB(
+        exness_client=exness_client,
+        kronos_engine=kronos_memo,
+        strategy_evaluator=effective_evaluator,
+        state_machine=state_machine,
+        db_manager=db_manager,
+        symbol=symbol,
+    )
+    tracker = VirtualSignalTracker(
+        exness_client=exness_client,
+        db_manager=db_manager,
+        regime_provider=kronos_memo.get_regime,
+        symbol=symbol,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    return loop_a, loop_b, tracker
+
+
 def build_runtime_bundle(
     *,
     exness_client: ExnessClient,
@@ -145,75 +226,37 @@ def build_runtime_bundle(
     All dependencies are injected; tests can pass mocks for every component.
     No real order is ever sent; mode is strictly SIGNAL_ONLY.
     """
-    # 1. News calendar filter — default empty, log source
     news_filter = _build_news_filter(news_events)
-
-    # 2. Spread filter (ADR-016 min_std_dev)
     spread_filter = SpreadFilter(min_std_dev=_SPREAD_FILTER_MIN_STD_DEV)
-
-    # 3. Database manager
     db_manager = DatabaseManager(db_path=db_path)
+    db_manager.init_db()
 
-    # 4. State machine
     state_machine = NewsStateMachine(
         spread_filter=spread_filter,
         news_filter=news_filter,
         db_manager=db_manager,
     )
-
-    # 5. Kronos engine — fallback heuristic when ONNX unavailable
     effective_kronos = _build_kronos(kronos_engine, model_path)
-
-    # 6. Strategy evaluator adapter
     effective_evaluator: StrategyEvaluator = (
         strategy_evaluator
         if strategy_evaluator is not None
         else _VolatilityBreakoutAdapter()  # type: ignore[assignment]
     )
 
-    # 7. M15 event (shared between Loop A and B)
-    m15_event = asyncio.Event()
-
-    # 8. Loop A
-    loop_a = FastTickLoopA(
+    loop_a, loop_b, tracker = _build_loops_and_tracker(
         exness_client=exness_client,
         state_machine=state_machine,
         db_manager=db_manager,
-        m15_event=m15_event,
+        effective_kronos=effective_kronos,
+        effective_evaluator=effective_evaluator,
         symbol=symbol,
         poll_interval_seconds=poll_interval_seconds,
     )
 
-    # 9. Loop B
-    loop_b = AnalysisLoopB(
-        exness_client=exness_client,
-        kronos_engine=effective_kronos,
-        strategy_evaluator=effective_evaluator,
-        state_machine=state_machine,
-        db_manager=db_manager,
-        symbol=symbol,
-    )
-
-    # 10. Dashboard (uses TelegramControlBot.send as transport)
     dashboard = SignalOnlyDashboard(
         client=control_bot,
         admin_chat_id=admin_chat_id,
     )
-
-    # 11. VirtualSignalTracker
-    tracker = VirtualSignalTracker(
-        exness_client=exness_client,
-        db_manager=db_manager,
-        regime_provider=lambda: (
-            effective_kronos.infer_regime([]).regime  # type: ignore[arg-type]
-            if False
-            else "RANGING"
-        ),
-        symbol=symbol,
-        poll_interval_seconds=poll_interval_seconds,
-    )
-
-    # 12. RuntimeService
     runtime = RuntimeService(
         loop_a=loop_a,
         loop_b=loop_b,
