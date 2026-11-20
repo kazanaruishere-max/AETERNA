@@ -450,8 +450,9 @@ async def test_e2e_calendar_snapshot_injected_and_reasoning_blackout(
 
     snapshot_file = Path(tmp_path) / "mql5_calendar.json"
     snapshot_data = {
-        "schema_version": "1.0",
+        "schema_version": 1,
         "source": "MQL5_CALENDAR",
+        "source_timezone": "TRADE_SERVER",
         "exported_at_utc": "2023-11-14T00:00:00Z",
         "events": [
             {

@@ -11,6 +11,7 @@
 
 #define SCHEMA_VERSION       1
 #define SOURCE_ID            "MQL5_CALENDAR"
+#define SOURCE_TIMEZONE      "TRADE_SERVER"
 #define SECONDS_PER_DAY      86400
 
 input string InpCurrency  = "USD";                    // Target Currency
@@ -37,10 +38,14 @@ string JsonEscape(string text)
 
 void OnStart()
 {
-   datetime now = TimeGMT();
-   if(now <= 0) now = TimeCurrent();
-   datetime date_from = now - (InpDaysPast * SECONDS_PER_DAY);
-   datetime date_to   = now + (InpDaysAhead * SECONDS_PER_DAY);
+   datetime now_gmt = TimeGMT();
+   if(now_gmt <= 0) now_gmt = TimeCurrent();
+   datetime now_server = TimeTradeServer();
+   if(now_server <= 0) now_server = TimeCurrent();
+   int offset_seconds = (int)(now_server - now_gmt);
+
+   datetime date_from = now_server - (InpDaysPast * SECONDS_PER_DAY);
+   datetime date_to   = now_server + (InpDaysAhead * SECONDS_PER_DAY);
 
    MqlCalendarValue values[];
    ResetLastError();
@@ -51,7 +56,8 @@ void OnStart()
    if(h == INVALID_HANDLE) return;
 
    FileWriteString(h, StringFormat("{\n  \"schema_version\": %d,\n  \"source\": \"%s\",\n", SCHEMA_VERSION, SOURCE_ID));
-   FileWriteString(h, StringFormat("  \"exported_at_utc\": \"%s\",\n  \"events\": [\n", FormatIsoUtc(now)));
+   FileWriteString(h, StringFormat("  \"source_timezone\": \"%s\",\n", SOURCE_TIMEZONE));
+   FileWriteString(h, StringFormat("  \"exported_at_utc\": \"%s\",\n  \"events\": [\n", FormatIsoUtc(now_gmt)));
 
    int count = 0;
    for(int i = 0; i < total; i++)
@@ -60,16 +66,18 @@ void OnStart()
       if(!CalendarEventById(values[i].event_id, ev) || ev.importance != CALENDAR_IMPORTANCE_HIGH) continue;
       if(StringCompare(InpCurrency, "", false) != 0 && StringCompare(ev.currency, InpCurrency, false) != 0) continue;
 
+      datetime ts_utc = values[i].time - offset_seconds;
+
       if(count > 0) FileWriteString(h, ",\n");
       string entry = StringFormat(
          "    {\"id\": %s, \"event_id\": %s, \"name\": \"%s\", \"currency\": \"%s\", \"impact\": \"HIGH\", \"timestamp_utc\": \"%s\"}",
-         IntegerToString(values[i].id), IntegerToString(values[i].event_id), JsonEscape(ev.name), ev.currency, FormatIsoUtc(values[i].time)
+         IntegerToString(values[i].id), IntegerToString(values[i].event_id), JsonEscape(ev.name), ev.currency, FormatIsoUtc(ts_utc)
       );
       FileWriteString(h, entry);
       count++;
    }
    FileWriteString(h, "\n  ]\n}\n");
    FileClose(h);
-   PrintFormat("[ExportCalendar] Exported %d USD HIGH events to %s", count, InpFileName);
+   PrintFormat("[ExportCalendar] Exported %d USD HIGH events to %s (offset=%d s)", count, InpFileName, offset_seconds);
 }
 //+------------------------------------------------------------------+
