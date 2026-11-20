@@ -20,8 +20,9 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
+from engine.execution.broker_bridge import ExnessBrokerBridge
+from engine.execution.emergency_handler import EmergencyHandler
 from engine.ingestion.python.exness_client import ExnessClient
 from engine.monitoring.types import DailyMetrics
 from engine.runtime.bootstrap import build_runtime_bundle
@@ -34,7 +35,6 @@ from engine.telegram_bot.auth import (
     TelegramTwoStepController,
 )
 from engine.telegram_bot.client import TelegramControlBot
-from engine.telegram_bot.interfaces import ExecutionEmergencyHandler
 
 # Configure structured, sanitized logging
 logger = logging.getLogger("aeterna")
@@ -55,29 +55,6 @@ def setup_runtime_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(handler)
-
-
-class MockEmergencyHandler(ExecutionEmergencyHandler):
-    """Fallback emergency handler during runtime initialization."""
-
-    def execute_force_close_all(self, max_deviation_pts: int = 50) -> list[Any]:
-        logger.warning(
-            "Emergency FORCE CLOSE ALL triggered (slippage tolerance: %d pts)",
-            max_deviation_pts,
-        )
-        return []
-
-    def execute_emergency_killswitch(self) -> bool:
-        logger.critical("EMERGENCY KILLSWITCH triggered from Telegram!")
-        return True
-
-    def set_system_state_paused(self) -> bool:
-        logger.warning("System state transitioning to PAUSED")
-        return True
-
-    def set_system_state_normal(self) -> bool:
-        logger.info("System state resuming to NORMAL")
-        return True
 
 
 class RuntimeMetricsCollector:
@@ -188,7 +165,8 @@ async def main_async() -> int:
         nonce_mgr = TelegramNonceManager(store=store)
         two_step = TelegramTwoStepController(store=store)
         metrics = RuntimeMetricsCollector()
-        handler = MockEmergencyHandler()
+        bridge = ExnessBrokerBridge(client=exness)
+        handler = EmergencyHandler(bridge=bridge, client=exness)
 
         control_bot = TelegramControlBot(
             token=tg_token,

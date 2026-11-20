@@ -20,7 +20,9 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `engine/analysis_engine/python/types.py` | TypedDict & dataclass definitions for Python backtest | `aeterna-backtest` | OMP | B | `pyright` strict pass |
 | `engine/analysis_engine/python/interfaces.py` | Protocol interfaces & dataset contracts M7 (Kronos, Macro, Sentiment) | `aeterna-architect` | OMP | B | `pyright` strict pass |
 | `engine/analysis_engine/python/` | Wrapper PyO3, regime Kronos ONNX runtime, strategy pool | `aeterna-strategy` | OMP | B | `pytest tests/analysis/` |
+| `engine/main.py` | Bootstraps live runtime, credentials, MT5 connection, Telegram bot, and service orchestration | `aeterna-lead` | OMP | A | `GATE-E2E-RUNTIME` |
 | `engine/execution/` | Bridge MT5 Exness, server-side SL/TP, order lifecycle | `aeterna-execution` | OMP | A | `GATE-M5-HUMAN` |
+| `engine/execution/emergency_handler.py` | Implementor konkret penanganan darurat (force-close, lockfile killswitch, repository state) | `aeterna-execution` | OMP | A | `tests/test_emergency_handler.py` |
 | `engine/telegram_bot/` | Interface admin, notifikasi alert, inline control 2-step | `aeterna-execution` | OMP | A | `TEST-TEL-*` |
 | `engine/shared/db/` | Shared SQLite WAL connection & repository IPC layer | `aeterna-architect` | OMP | A | `TEST-DB-*` |
 | `engine/runtime/loop_a.py` | Fast-tick 2s polling, spread guard, state IPC, dan event penutup M15 | `aeterna-risk` | OMP | A | `tests/runtime/test_loop_a.py` |
@@ -39,6 +41,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `instruments/xauusd/strategies/` | Logika 4 strategi spesifik XAUUSD (ATR Breakout, dll) | `aeterna-strategy` | OMP | B | Strategy unit tests |
 | `instruments/xauusd/macro_features/` | Kalkulasi variabel makro XAUUSD (US TIPS 10Y, DXY) | `aeterna-strategy` | OMP | B | Macro feature tests |
 | `tests/` | Golden tests deterministik & suite pengujian otomatis | `aeterna-verifier` | OMP | A | `uv run pytest tests/ -v` |
+| `tests/test_emergency_handler.py` | Unit test deterministik untuk emergency handler, force close, lockfile, dan transisi state | `aeterna-verifier` | OMP | A | `uv run pytest tests/test_emergency_handler.py` |
 | `scripts/` | Skrip verifikasi ekosistem 5-pilar dan audit keamanan lokal (SCA) | `aeterna-security` | Lead / Verifier | A | `uv run python scripts/audit_security.py` |
 | `docs/` | Dokumentasi arsitektur, PRD, security, dan operasional | `aeterna-architect` | Lead / Manual | C | Doc review |
 | `docs/aeterna/ea-development-and-optimization-guide.md` | Panduan teknik resmi optimasi MQL5 EA & multi-agent workflow | `aeterna-lead` | Lead | A | Invariant compliance audit |
@@ -55,7 +58,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 ## 2. Klasifikasi Safety Tier
 
 ### Tier A — Safety-Critical & Financial Risk
-- **Modul**: `engine/risk_gate/`, `engine/state_machine/`, `engine/execution/`, `engine/telegram_bot/`, `instruments/xauusd/config/`
+- **Modul**: `engine/main.py`, `engine/risk_gate/`, `engine/state_machine/`, `engine/execution/`, `engine/telegram_bot/`, `instruments/xauusd/config/`
 - **Aturan**:
   - Wajib **Two-Key Review**: Dirancang oleh specialist terkait, di-red team oleh `aeterna-security` atau `aeterna-verifier`.
   - Wajib 100% deterministik golden test sebelum merge.
