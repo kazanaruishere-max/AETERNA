@@ -357,7 +357,9 @@ def test_emergency_killswitch_sqlite_operational_error_still_writes_lockfile(
 
     payload = json.loads(raw_content)
     assert payload["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
+    assert payload["peak_equity"] == 1200.0
     assert payload["current_equity"] == 0.0
+    assert payload["drawdown_pct"] == 0.0
     assert payload["equity_source"] == "UNAVAILABLE"
     assert any("unable to open database file" in record.message for record in caplog.records)
 
@@ -391,9 +393,41 @@ def test_emergency_killswitch_sqlite_database_error_still_writes_lockfile(
 
     payload = json.loads(raw_content)
     assert payload["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
+    assert payload["peak_equity"] == 1200.0
     assert payload["current_equity"] == 0.0
+    assert payload["drawdown_pct"] == 0.0
     assert payload["equity_source"] == "UNAVAILABLE"
     assert any("file is not a database" in record.message for record in caplog.records)
+
+
+def test_emergency_killswitch_peak_equity_positive_with_unavailable_equity_zero_drawdown(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Verify peak_equity > 0 with unavailable equity produces drawdown_pct=0.0, never 100.0."""
+    lock_file = tmp_path / "EMERGENCY_KILLSWITCH.lock"
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.get_system_state.return_value = None
+
+    handler = EmergencyHandler(
+        db_manager=mock_db,
+        client=None,
+        lockfile_path=lock_file,
+        peak_equity=1500.0,
+    )
+
+    with caplog.at_level("WARNING"):
+        ok = handler.execute_emergency_killswitch()
+
+    assert ok is True
+    assert lock_file.exists()
+    payload = json.loads(lock_file.read_text(encoding="utf-8"))
+
+    assert payload["peak_equity"] == 1500.0
+    assert payload["current_equity"] == 0.0
+    assert payload["equity_source"] == "UNAVAILABLE"
+    assert payload["drawdown_pct"] == 0.0
+    assert "100.0" not in json.dumps(payload), "Drawdown 100.0 must never be fabricated for UNAVAILABLE equity"
+    assert any("skipping drawdown calculation" in record.message for record in caplog.records)
 
 
 def test_set_system_state_paused_db_error_does_not_claim_paused(
