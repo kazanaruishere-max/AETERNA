@@ -36,6 +36,7 @@ from engine.models.kronos.inference import KronosH4RegimeEngine
 from engine.runtime.dashboard import SignalOnlyDashboard
 from engine.runtime.loop_a import FastTickLoopA
 from engine.runtime.loop_b import AnalysisLoopB
+from engine.runtime.news_sources import load_calendar_snapshot
 from engine.runtime.runtime_service import RuntimeService
 from engine.runtime.virtual_tracker import VirtualSignalTracker
 from engine.shared.db.database import DatabaseManager
@@ -218,6 +219,8 @@ def build_runtime_bundle(
     poll_interval_seconds: float = 2.0,
     publish_interval_seconds: float = 5.0,
     news_events: Sequence[datetime] | None = None,
+    calendar_snapshot_path: str | None = None,
+    reasoning_enabled: bool = True,
     strategy_evaluator: StrategyEvaluator | None = None,
     kronos_engine: KronosInferenceEngine | None = None,
 ) -> RuntimeBundle:
@@ -226,7 +229,10 @@ def build_runtime_bundle(
     All dependencies are injected; tests can pass mocks for every component.
     No real order is ever sent; mode is strictly SIGNAL_ONLY.
     """
-    news_filter = _build_news_filter(news_events)
+    news_filter = _build_news_filter(
+        events=news_events,
+        calendar_snapshot_path=calendar_snapshot_path,
+    )
     spread_filter = SpreadFilter(min_std_dev=_SPREAD_FILTER_MIN_STD_DEV)
     db_manager = DatabaseManager(db_path=db_path)
     db_manager.init_db()
@@ -256,6 +262,10 @@ def build_runtime_bundle(
     dashboard = SignalOnlyDashboard(
         client=control_bot,
         admin_chat_id=admin_chat_id,
+        reasoning_enabled=reasoning_enabled,
+        state_machine=state_machine,
+        db_manager=db_manager,
+        regime_provider=tracker.regime_provider,
     )
     runtime = RuntimeService(
         loop_a=loop_a,
@@ -284,15 +294,37 @@ def build_runtime_bundle(
 # ---------------------------------------------------------------------------
 
 
-def _build_news_filter(events: Sequence[datetime] | None) -> NewsCalendarFilter:
+def _build_news_filter(
+    events: Sequence[datetime] | None = None,
+    calendar_snapshot_path: str | None = None,
+) -> NewsCalendarFilter:
     """Create NewsCalendarFilter; log NEWS_SOURCE and NEWS_EVENT_COUNT."""
-    if events is None:
+    all_events: list[datetime] = []
+    has_snapshot = False
+
+    if calendar_snapshot_path is not None:
+        snapshot_events = load_calendar_snapshot(calendar_snapshot_path)
+        all_events.extend(snapshot_events)
+        has_snapshot = True
+
+    if events is not None:
+        all_events.extend(events)
+
+    if not all_events and not has_snapshot and events is None:
         logger.info("NEWS_SOURCE=NONE NEWS_EVENT_COUNT=0")
         return NewsCalendarFilter(events=None)
 
-    news_filter = NewsCalendarFilter(events=list(events))
+    news_filter = NewsCalendarFilter(events=all_events)
     count = len(news_filter.scheduled_events)
-    logger.info("NEWS_SOURCE=INJECTED NEWS_EVENT_COUNT=%d", count)
+    if has_snapshot:
+        if count > 0:
+            logger.info("NEWS_SOURCE=MQL5_SNAPSHOT NEWS_EVENT_COUNT=%d", count)
+        else:
+            logger.info("NEWS_SOURCE=NONE NEWS_EVENT_COUNT=0")
+    elif events is not None:
+        logger.info("NEWS_SOURCE=INJECTED NEWS_EVENT_COUNT=%d", count)
+    else:
+        logger.info("NEWS_SOURCE=NONE NEWS_EVENT_COUNT=0")
     return news_filter
 
 
