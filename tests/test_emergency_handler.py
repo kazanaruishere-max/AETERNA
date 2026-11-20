@@ -9,7 +9,10 @@ Responsibility: Verifies deterministic emergency handling:
 5. Killswitch write failure safely returns False.
 6. System state transitions (PAUSED / NORMAL) are persisted in SQLite WAL database.
 7. engine/main.py uses production EmergencyHandler instead of MockEmergencyHandler.
-Covers: REQ-RSK-007, REQ-EXE-001, REQ-TEL-003
+8. Killswitch writes lockfile even when DB init fails (fail-closed, cheapest test).
+9. Zero fabricated equity (no 1000.0) when equity cannot be resolved.
+10. Deviation from operator is forwarded to ExnessBrokerBridge.
+Covers: REQ-RUNTIME-007, REQ-EXE-001, REQ-TEL-003
 Owner: aeterna-verifier
 Tier: Tier A
 """
@@ -73,10 +76,32 @@ def test_force_close_all_with_open_positions() -> None:
     assert results[1].ticket == 102 and results[1].success is True and results[1].closed_lot == 0.02
     assert mock_bridge.close_partial_position.call_count == 2
     mock_bridge.close_partial_position.assert_any_call(
-        ticket=101, position_identifier=101, symbol="XAUUSDm", direction="BUY", close_lot=0.04
+        ticket=101, position_identifier=101, symbol="XAUUSDm", direction="BUY", close_lot=0.04, deviation=50
     )
     mock_bridge.close_partial_position.assert_any_call(
-        ticket=102, position_identifier=102, symbol="XAUUSDm", direction="SELL", close_lot=0.02
+        ticket=102, position_identifier=102, symbol="XAUUSDm", direction="SELL", close_lot=0.02, deviation=50
+    )
+
+
+def test_force_close_all_forwards_custom_deviation_to_bridge() -> None:
+    """Verify custom max_deviation_pts is forwarded to bridge.close_partial_position."""
+    client, mock_mt5 = _create_mock_client(connected=True)
+    pos = DummyMT5Position(ticket=501, identifier=501, symbol="XAUUSDm", volume=0.05, type=0)
+    mock_mt5.positions_get.return_value = (pos,)
+
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.client = client
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        success=True, closed_ticket=501, new_ticket=None, closed_lot=0.05, remaining_lot=0.0, executed_price=2750.0
+    )
+
+    handler = EmergencyHandler(bridge=mock_bridge, client=client)
+    results = handler.execute_force_close_all(max_deviation_pts=75)
+
+    assert len(results) == 1
+    assert results[0].success is True
+    mock_bridge.close_partial_position.assert_called_once_with(
+        ticket=501, position_identifier=501, symbol="XAUUSDm", direction="BUY", close_lot=0.05, deviation=75
     )
 
 
@@ -188,14 +213,68 @@ def test_emergency_killswitch_writes_lockfile_with_watchdog_payload(tmp_path: Pa
     assert handler.is_paused is True
     mock_db.set_system_state.assert_called_once()
 
-    # Verify payload format matches watchdog EmergencyLockPayload in circuit_breaker.go
     data = json.loads(lock_file.read_text(encoding="utf-8"))
     assert "timestamp_utc" in data
     assert data["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
     assert data["peak_equity"] == 1500.0
     assert data["current_equity"] == 1250.50
+    assert data["equity_source"] == "DB_SYSTEM_STATE"
     # drawdown = (1500 - 1250.50) / 1500 * 100 = 16.6333 %
     assert pytest.approx(data["drawdown_pct"], rel=1e-3) == 16.6333
+
+
+def test_emergency_killswitch_db_init_failure_still_writes_lockfile(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Cheapest test: inject DB init failure and assert EMERGENCY_KILLSWITCH.lock is still written."""
+    lock_file = tmp_path / "EMERGENCY_KILLSWITCH.lock"
+    assert not lock_file.exists()
+
+    with patch("engine.shared.db.database.DatabaseManager.init_db", side_effect=RuntimeError("SQLite I/O failure")):
+        handler = EmergencyHandler(
+            db_manager=None,
+            lockfile_path=lock_file,
+            db_path=str(tmp_path / "corrupt.db"),
+            peak_equity=0.0,
+        )
+
+        with caplog.at_level("ERROR"):
+            ok = handler.execute_emergency_killswitch()
+
+    assert ok is True
+    assert lock_file.exists()
+    assert handler.is_killed is True
+
+    payload = json.loads(lock_file.read_text(encoding="utf-8"))
+    assert payload["trigger_reason"] == "MANUAL_TELEGRAM_KILLSWITCH"
+    assert payload["current_equity"] == 0.0
+    assert payload["equity_source"] == "UNAVAILABLE"
+    assert any("Failed to initialize DatabaseManager" in record.message for record in caplog.records)
+
+
+def test_emergency_killswitch_no_fabricated_equity(tmp_path: Path) -> None:
+    """Verify that when equity cannot be read, 1000.0 is never fabricated into payload."""
+    lock_file = tmp_path / "EMERGENCY_KILLSWITCH.lock"
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.get_system_state.return_value = None  # No system state
+
+    handler = EmergencyHandler(
+        db_manager=mock_db,
+        client=None,
+        lockfile_path=lock_file,
+        peak_equity=0.0,
+    )
+
+    ok = handler.execute_emergency_killswitch()
+    assert ok is True
+    raw_content = lock_file.read_text(encoding="utf-8")
+    assert "1000" not in raw_content, "No fabricated 1000.0 equity allowed in payload"
+
+    payload = json.loads(raw_content)
+    assert payload["current_equity"] == 0.0
+    assert payload["peak_equity"] == 0.0
+    assert payload["drawdown_pct"] == 0.0
+    assert payload["equity_source"] == "UNAVAILABLE"
 
 
 def test_emergency_killswitch_write_failure_returns_false(tmp_path: Path) -> None:

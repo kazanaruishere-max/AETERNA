@@ -14,7 +14,6 @@ Covers:
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from dataclasses import dataclass
 from unittest.mock import MagicMock
@@ -304,7 +303,13 @@ def test_broker_bridge_close_partial_position_and_reanchor() -> None:
     mock_mt5.order_send.assert_called_once()
     payload = mock_mt5.order_send.call_args[0][0]
     assert payload["action"] == 1 and payload["position"] == 10001 and payload["type"] == 1  # SELL
+    assert payload["deviation"] == 20
     mock_mt5.positions_get.assert_called_once_with(symbol="XAUUSD")
+
+    # Cover custom deviation forwarding
+    mock_mt5.order_send.reset_mock()
+    bridge.close_partial_position(10001, 9999, "XAUUSD", "BUY", 0.02, deviation=45)
+    assert mock_mt5.order_send.call_args[0][0]["deviation"] == 45
 
     # Cover no-match fallback branch
     mock_mt5.positions_get.return_value = []
@@ -370,32 +375,72 @@ def test_lapis_4_and_5_invalidation_rules() -> None:
     assert not PositionManager.is_regime_invalidated("SELL", "BEARISH_TRENDING")
 
 
+def test_position_state_with_elapsed_bar() -> None:
+    """Verify PositionState.with_elapsed_bar immutably advances elapsed_bars_m15."""
+    pos = _create_sample_buy_pos(current_lot=0.04)
+    assert pos.elapsed_bars_m15 == 0
+
+    pos_1 = pos.with_elapsed_bar(1)
+    assert pos_1.elapsed_bars_m15 == 1
+    assert pos.elapsed_bars_m15 == 0  # Immutability check
+
+    pos_4 = pos_1.with_elapsed_bar(3)
+    assert pos_4.elapsed_bars_m15 == 4
+
+
+def test_position_manager_on_bar_closed() -> None:
+    """Verify on_bar_closed advances bar counter and liquidates at 8 bars."""
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        success=True, closed_ticket=10001, new_ticket=None, closed_lot=0.04, remaining_lot=0.0, executed_price=2755.0
+    )
+    pm = PositionManager(bridge=mock_bridge)
+    pos = _create_sample_buy_pos(current_lot=0.04)
+
+    # 1 to 7 bars: counter increments, no liquidation
+    for bar in range(1, 8):
+        pos, close_res = pm.on_bar_closed(pos)
+        assert pos.elapsed_bars_m15 == bar
+        assert close_res is None
+    mock_bridge.close_partial_position.assert_not_called()
+
+    # 8th bar: liquidation triggers
+    pos, close_res = pm.on_bar_closed(pos)
+    assert pos.elapsed_bars_m15 == 8
+    assert close_res is not None and close_res.success is True
+    assert pos.current_lot == 0.0
+    mock_bridge.close_partial_position.assert_called_once()
+
+
 def test_evaluate_time_invalidation_active_evaluation_path() -> None:
-    """Verify time invalidation is actively evaluated and liquidates position at 8 bars."""
+    """Verify counter advances naturally in real evaluation path to 8 bars and triggers liquidation."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
     mock_bridge.close_partial_position.return_value = PartialCloseResult(
         success=True, closed_ticket=10001, new_ticket=None, closed_lot=0.04, remaining_lot=0.0, executed_price=2755.0
     )
     pm = PositionManager(bridge=mock_bridge)
 
-    # 1. Active position with 7 bars elapsed -> must NOT liquidate
-    pos_7 = _create_sample_buy_pos(current_lot=0.04)
-    pos_7 = dataclasses.replace(pos_7, elapsed_bars_m15=7)
+    pos = _create_sample_buy_pos(current_lot=0.04)
+    assert pos.elapsed_bars_m15 == 0
     tick = DummyTick(bid=2751.0, ask=2751.3)  # Floating < 1.0R
-    _res_pos_7, _mod_res_7, close_res_7 = pm.evaluate_trailing_and_scaleout(
-        pos_7, tick, DEFAULT_INFO, now_mono=10.0
-    )
-    assert close_res_7 is None
+
+    # 1. Real evaluation path over 7 M15 closed bars: counter increments naturally, must NOT liquidate
+    for bar_idx in range(1, 8):
+        pos, _mod_res, close_res = pm.evaluate_trailing_and_scaleout(
+            pos, tick, DEFAULT_INFO, now_mono=10.0 + bar_idx, bar_closed=True
+        )
+        assert pos.elapsed_bars_m15 == bar_idx
+        assert close_res is None
     mock_bridge.close_partial_position.assert_not_called()
 
-    # 2. Active position with 8 bars elapsed -> MUST liquidate via bridge
-    pos_8 = dataclasses.replace(pos_7, elapsed_bars_m15=8)
-    res_pos_8, _mod_res_8, close_res_8 = pm.evaluate_trailing_and_scaleout(
-        pos_8, tick, DEFAULT_INFO, now_mono=10.0
+    # 2. 8th M15 bar closes in the real evaluation path: MUST liquidate via bridge
+    pos, _mod_res_8, close_res_8 = pm.evaluate_trailing_and_scaleout(
+        pos, tick, DEFAULT_INFO, now_mono=18.0, bar_closed=True
     )
+    assert pos.elapsed_bars_m15 == 8
     assert close_res_8 is not None
     assert close_res_8.success is True
-    assert res_pos_8.current_lot == 0.0
+    assert pos.current_lot == 0.0
     mock_bridge.close_partial_position.assert_called_once_with(
         ticket=10001,
         position_identifier=9999,
@@ -403,5 +448,6 @@ def test_evaluate_time_invalidation_active_evaluation_path() -> None:
         direction="BUY",
         close_lot=0.04,
     )
+
 
 

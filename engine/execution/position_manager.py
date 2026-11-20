@@ -88,6 +88,26 @@ class PositionState:
             elapsed_bars_m15=self.elapsed_bars_m15,
         )
 
+    def with_elapsed_bar(self, count: int = 1) -> PositionState:
+        """Return new state with incremented elapsed M15 bar count."""
+        return PositionState(
+            ticket=self.ticket,
+            position_identifier=self.position_identifier,
+            symbol=self.symbol,
+            direction=self.direction,
+            open_price=self.open_price,
+            current_lot=self.current_lot,
+            initial_sl=self.initial_sl,
+            current_sl=self.current_sl,
+            tp=self.tp,
+            initial_r_pts=self.initial_r_pts,
+            spread_at_entry_usd=self.spread_at_entry_usd,
+            be_sl_modified=self.be_sl_modified,
+            partial_closed=self.partial_closed,
+            last_modify_time_mono=self.last_modify_time_mono,
+            elapsed_bars_m15=self.elapsed_bars_m15 + count,
+        )
+
 
 class PositionManager:
     """Manages active position lifecycle, server-side trailing stop, and scale-out."""
@@ -236,12 +256,23 @@ class PositionManager:
             pos = dataclasses.replace(pos, last_modify_time_mono=now)
         return pos, mod_res
 
+    def on_bar_closed(
+        self,
+        pos: PositionState,
+    ) -> tuple[PositionState, PartialCloseResult | None]:
+        """Advance position by one closed M15 bar and evaluate time invalidation."""
+        pos = pos.with_elapsed_bar(1)
+        return self.evaluate_time_invalidation(pos)
+
     def evaluate_time_invalidation(
         self,
         pos: PositionState,
         elapsed_bars_m15: int | None = None,
+        bar_closed: bool = False,
     ) -> tuple[PositionState, PartialCloseResult | None]:
         """Evaluate Lapis 4 Time Invalidation (8 closed bars on M15) and liquidate if expired."""
+        if bar_closed:
+            pos = pos.with_elapsed_bar(1)
         bars = pos.elapsed_bars_m15 if elapsed_bars_m15 is None else elapsed_bars_m15
         if self.is_time_invalidated(bars):
             logger.info(
@@ -268,9 +299,12 @@ class PositionManager:
         symbol_info: Any,
         now_mono: float | None = None,
         elapsed_bars_m15: int | None = None,
+        bar_closed: bool = False,
     ) -> tuple[PositionState, ModifyResult | None, PartialCloseResult | None]:
         """Evaluate active position against +1.0R threshold, dynamic stop guard, and trailing logic."""
-        pos, time_inv_res = self.evaluate_time_invalidation(pos, elapsed_bars_m15)
+        pos, time_inv_res = self.evaluate_time_invalidation(
+            pos, elapsed_bars_m15=elapsed_bars_m15, bar_closed=bar_closed
+        )
         if time_inv_res is not None:
             return pos, None, time_inv_res
 
