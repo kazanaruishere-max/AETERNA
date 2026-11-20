@@ -200,11 +200,12 @@ def test_emergency_killswitch_writes_lockfile_with_watchdog_payload(tmp_path: Pa
 
 def test_emergency_killswitch_write_failure_returns_false(tmp_path: Path) -> None:
     """Verify lockfile write error returns False and does not mark engine killed."""
-    # Point to unwritable directory
     invalid_path = tmp_path / "nonexistent_dir" / "readonly_sub" / "lock.lock"
-    handler = EmergencyHandler(lockfile_path=invalid_path)
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.get_system_state.return_value = None
+    handler = EmergencyHandler(lockfile_path=invalid_path, db_manager=mock_db)
 
-    with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
+    with patch("builtins.open", side_effect=OSError("Permission denied")):
         ok = handler.execute_emergency_killswitch()
 
     assert ok is False

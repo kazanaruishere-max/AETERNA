@@ -290,9 +290,9 @@ class EmergencyHandler(ExecutionEmergencyHandler):
         if db is not None:
             try:
                 state = db.get_system_state()
-                if state is not None and state.equity_usd > 0.0:
+                if state is not None and getattr(state, "equity_usd", None) is not None and float(state.equity_usd) > 0.0:
                     return float(state.equity_usd)
-            except (RuntimeError, ValueError, OSError) as exc:
+            except (RuntimeError, ValueError, OSError, TypeError) as exc:
                 logger.warning("Could not read equity from db_manager: %s", exc)
 
         client = self.client
@@ -309,18 +309,13 @@ class EmergencyHandler(ExecutionEmergencyHandler):
 
     def _get_db_manager(self) -> Any:
         """Lazily initialize DatabaseManager if not explicitly provided."""
-        if self._db_manager is not None:
-            return self._db_manager
-        try:
+        if self._db_manager is None:
             from engine.shared.db.database import DatabaseManager
 
             mgr = DatabaseManager(db_path=str(self.db_path))
             mgr.init_db()
             self._db_manager = mgr
-            return self._db_manager
-        except Exception:
-            logger.exception("Failed to initialize DatabaseManager at %s", self.db_path)
-            return None
+        return self._db_manager
 
 
 ProductionEmergencyHandler = EmergencyHandler
