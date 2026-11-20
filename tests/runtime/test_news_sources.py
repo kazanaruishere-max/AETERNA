@@ -18,14 +18,20 @@ from engine.runtime.news_sources import load_calendar_snapshot
 
 
 def _snap(
-    tmp_path: Path, events: list[dict[str, Any]], source: str = "MQL5_CALENDAR"
+    tmp_path: Path,
+    events: list[dict[str, Any]],
+    source: str = "MQL5_CALENDAR",
+    schema_version: Any = 1,
+    source_timezone: Any = "TRADE_SERVER",
 ) -> Path:
-    payload = {
-        "schema_version": 1,
+    payload: dict[str, Any] = {
+        "schema_version": schema_version,
         "source": source,
         "exported_at_utc": "2026-11-20T08:00:00Z",
         "events": events,
     }
+    if source_timezone is not None:
+        payload["source_timezone"] = source_timezone
     p = tmp_path / "calendar_snapshot.json"
     p.write_text(json.dumps(payload), encoding="utf-8")
     return p
@@ -54,6 +60,7 @@ def test_load_calendar_snapshot_valid_two_events(
         datetime(2026, 11, 20, 13, 30, tzinfo=UTC),
         datetime(2026, 11, 20, 18, 0, tzinfo=UTC),
     ]
+    assert "NEWS_TIMEZONE_CONVERTED source_timezone=TRADE_SERVER" in caplog.text
     assert "NEWS_SOURCE=MQL5_SNAPSHOT" in caplog.text
 
 
@@ -151,3 +158,90 @@ def test_load_calendar_snapshot_none_path(caplog: pytest.LogCaptureFixture) -> N
     with caplog.at_level(logging.INFO):
         assert load_calendar_snapshot(None) == []
     assert "NEWS_SOURCE=NONE" in caplog.text
+
+
+def test_load_calendar_snapshot_rejects_missing_source_timezone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Old snapshot without source_timezone must be rejected."""
+    events = [
+        {
+            "name": "NFP",
+            "currency": "USD",
+            "impact": "HIGH",
+            "timestamp_utc": "2026-11-20T13:30:00Z",
+        }
+    ]
+    with caplog.at_level(logging.WARNING):
+        p = _snap(tmp_path, events, source_timezone=None)
+        assert load_calendar_snapshot(p) == []
+    assert "NEWS_SOURCE=NONE" in caplog.text
+    assert "reason=invalid_or_missing_source_timezone" in caplog.text
+
+
+@pytest.mark.parametrize("bad_tz", ["UTC", "SERVER", "GMT", "", None, 123])
+def test_load_calendar_snapshot_rejects_invalid_source_timezone(
+    tmp_path: Path, bad_tz: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only source_timezone='TRADE_SERVER' is accepted."""
+    events = [
+        {
+            "name": "NFP",
+            "currency": "USD",
+            "impact": "HIGH",
+            "timestamp_utc": "2026-11-20T13:30:00Z",
+        }
+    ]
+    with caplog.at_level(logging.WARNING):
+        p = _snap(tmp_path, events, source_timezone=bad_tz)
+        assert load_calendar_snapshot(p) == []
+    assert "NEWS_SOURCE=NONE" in caplog.text
+
+
+@pytest.mark.parametrize("bad_schema", [2, 0, -1, "1", "1.0", 1.0, None, True, False])
+def test_load_calendar_snapshot_rejects_invalid_schema_version(
+    tmp_path: Path, bad_schema: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only schema_version == 1 (int) is accepted."""
+    events = [
+        {
+            "name": "NFP",
+            "currency": "USD",
+            "impact": "HIGH",
+            "timestamp_utc": "2026-11-20T13:30:00Z",
+        }
+    ]
+    with caplog.at_level(logging.WARNING):
+        p = _snap(tmp_path, events, schema_version=bad_schema)
+        assert load_calendar_snapshot(p) == []
+    assert "NEWS_SOURCE=NONE" in caplog.text
+    assert "reason=invalid_schema_version" in caplog.text
+
+
+def test_mql5_export_offset_conversion_plus_7_hours(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An offset of +7 hours (TimeTradeServer() - TimeGMT() == 25200s) shifts trade server time to UTC."""
+    # Trade server time: 2026-11-20 20:30:00
+    server_time = datetime(2026, 11, 20, 20, 30, 0, tzinfo=UTC)
+    offset_seconds = 7 * 3600  # +7 jam (25200 s)
+    timestamp_utc_sec = int(server_time.timestamp()) - offset_seconds
+    dt_utc = datetime.fromtimestamp(timestamp_utc_sec, tz=UTC)
+
+    # Exporter writes ISO string in UTC
+    formatted_utc = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert formatted_utc == "2026-11-20T13:30:00Z"
+
+    events = [
+        {
+            "name": "Core CPI",
+            "currency": "USD",
+            "impact": "HIGH",
+            "timestamp_utc": formatted_utc,
+        }
+    ]
+    with caplog.at_level(logging.INFO):
+        loaded = load_calendar_snapshot(_snap(tmp_path, events))
+
+    assert loaded == [datetime(2026, 11, 20, 13, 30, tzinfo=UTC)]
+    assert "NEWS_TIMEZONE_CONVERTED source_timezone=TRADE_SERVER" in caplog.text

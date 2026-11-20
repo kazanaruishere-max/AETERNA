@@ -17,7 +17,9 @@ from typing import cast
 
 logger = logging.getLogger("aeterna.runtime.news_sources")
 
+_EXPECTED_SCHEMA_VERSION = 1
 _EXPECTED_SOURCE = "MQL5_CALENDAR"
+_EXPECTED_SOURCE_TIMEZONE = "TRADE_SERVER"
 _REQUIRED_CURRENCY = "USD"
 _REQUIRED_IMPACT = "HIGH"
 
@@ -49,12 +51,33 @@ def load_calendar_snapshot(path: str | Path | None) -> list[datetime]:
         return []
 
     payload = cast(dict[str, object], raw_data)
+    schema_ver = payload.get("schema_version")
+    if (
+        not isinstance(schema_ver, int)
+        or isinstance(schema_ver, bool)
+        or schema_ver != _EXPECTED_SCHEMA_VERSION
+    ):
+        logger.warning(
+            "NEWS_SOURCE=NONE reason=invalid_schema_version schema_version=%s",
+            str(schema_ver),
+        )
+        return []
+
     source_val = payload.get("source")
     if not isinstance(source_val, str) or source_val != _EXPECTED_SOURCE:
         logger.warning(
             "NEWS_SOURCE=NONE reason=invalid_source source=%s", str(source_val)
         )
         return []
+
+    source_tz = payload.get("source_timezone")
+    if not isinstance(source_tz, str) or source_tz != _EXPECTED_SOURCE_TIMEZONE:
+        logger.warning(
+            "NEWS_SOURCE=NONE reason=invalid_or_missing_source_timezone source_timezone=%s",
+            str(source_tz),
+        )
+        return []
+
     events_raw = payload.get("events")
     if not isinstance(events_raw, list):
         logger.warning("NEWS_SOURCE=NONE reason=events_not_a_list")
@@ -80,6 +103,7 @@ def load_calendar_snapshot(path: str | Path | None) -> list[datetime]:
             continue
 
     valid_events.sort()
+    logger.info("NEWS_TIMEZONE_CONVERTED source_timezone=%s", source_tz)
     logger.info("NEWS_SOURCE=MQL5_SNAPSHOT event_count=%d", len(valid_events))
     return valid_events
 
