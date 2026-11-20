@@ -119,7 +119,14 @@ class RuntimeService:
         self, card: ObservationCard, bar_ts: int
     ) -> bool:
         """Publish observation card with rendered OHLC chart if available, else text."""
-        candles = self._get_candles_for_bar(bar_ts)
+        candles: list[CandleDict] = []
+        if self.chart_candle_provider is not None:
+            try:
+                candles = self.chart_candle_provider(bar_ts) or []
+            except Exception:
+                logger.exception("chart_candle_provider failed for bar_ts=%d", bar_ts)
+                candles = []
+
         if not candles:
             logger.info("CHART_UNAVAILABLE=FALLBACK_TEXT")
             return self.dashboard.publish(card)
@@ -136,17 +143,6 @@ class RuntimeService:
             logger.exception("Chart rendering failed; falling back to text")
             logger.info("CHART_UNAVAILABLE=FALLBACK_TEXT")
             return self.dashboard.publish(card)
-
-    def _get_candles_for_bar(self, bar_ts: int) -> list[CandleDict] | None:
-        """Fetch candles from provider; return None on failure or if provider missing."""
-        if self.chart_candle_provider is None:
-            return None
-        try:
-            candles = self.chart_candle_provider(bar_ts)
-            return candles if candles else None
-        except Exception:
-            logger.exception("chart_candle_provider failed for bar_ts=%d", bar_ts)
-            return None
 
     def _create_card_from_record(self, record: Any) -> ObservationCard:
         """Map a SignalObservationRecord into an admin ObservationCard."""
