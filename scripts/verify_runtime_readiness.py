@@ -64,10 +64,12 @@ def _run_cmd(
     return proc.returncode, proc.stdout, proc.stderr, time.perf_counter() - t0
 
 
-def _run_acceptance_suite(repo_root: Path) -> tuple[bool, list[dict[str, Any]]]:
-    """Run all mandatory acceptance commands and record raw exit codes and outputs."""
+def _get_acceptance_commands(
+    repo_root: Path,
+) -> list[tuple[str, list[str], Path, dict[str, str] | None]]:
+    """Return configured acceptance commands with their working directory and environment."""
     env = dict(os.environ, PYO3_PYTHON=sys.executable)
-    commands: list[tuple[str, list[str], Path, dict[str, str] | None]] = [
+    return [
         (
             "uv run pytest tests/ -q",
             ["uv", "run", "pytest", "tests/", "-q"],
@@ -83,6 +85,12 @@ def _run_acceptance_suite(repo_root: Path) -> tuple[bool, list[dict[str, Any]]]:
         (
             "uv run pytest tests/test_emergency_handler.py -v",
             ["uv", "run", "pytest", "tests/test_emergency_handler.py", "-v"],
+            repo_root,
+            None,
+        ),
+        (
+            "uv run pytest tests/test_runtime_readiness_harness.py -v",
+            ["uv", "run", "pytest", "tests/test_runtime_readiness_harness.py", "-v"],
             repo_root,
             None,
         ),
@@ -102,6 +110,11 @@ def _run_acceptance_suite(repo_root: Path) -> tuple[bool, list[dict[str, Any]]]:
         ),
         ("git diff --check", ["git", "diff", "--check"], repo_root, None),
     ]
+
+
+def _run_acceptance_suite(repo_root: Path) -> tuple[bool, list[dict[str, Any]]]:
+    """Run all mandatory acceptance commands and record raw exit codes and outputs."""
+    commands = _get_acceptance_commands(repo_root)
     results: list[dict[str, Any]] = []
     all_passed = True
     for name, cmd, cwd, c_env in commands:
@@ -174,13 +187,14 @@ def _build_watchdog_binary(repo_root: Path, bin_path: Path) -> None:
 
 def _validate_lockfile_payload(payload: dict[str, Any]) -> None:
     """Validate lockfile payload schema and reject fabricated financial metrics."""
-    for f in (
+    required = (
         "timestamp_utc",
         "trigger_reason",
         "peak_equity",
         "current_equity",
         "drawdown_pct",
-    ):
+    )
+    for f in required:
         if f not in payload:
             raise AssertionError(f"Missing required lockfile field: {f}")
     if payload.get("equity_source") == "UNAVAILABLE":
@@ -261,20 +275,24 @@ def _verify_killswitch_db_failed(lockfile_path: Path) -> dict[str, Any]:
     }
 
 
-def _stop_dummy_watchdog(proc: subprocess.Popen[bytes]) -> int:
-    """Safely terminate dummy watchdog process and return actual exit code."""
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2.0)
-    return proc.returncode if proc.returncode is not None else -1
+def _stop_dummy_watchdog(proc: subprocess.Popen[bytes]) -> tuple[int, str]:
+    """Safely terminate dummy watchdog process and return actual exit code and termination method."""
+    if proc.poll() is not None:
+        return proc.returncode, "already_stopped"
+    proc.terminate()
+    try:
+        proc.wait(timeout=5.0)
+        return proc.returncode if proc.returncode is not None else 0, "terminate()"
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2.0)
+        return proc.returncode if proc.returncode is not None else -1, "kill()"
 
 
-def _verify_dummy_watchdog(repo_root: Path, tmp_dir: Path) -> dict[str, Any]:
-    """Run full dummy E2E test verifying order gating before and after killswitch."""
+def _prepare_watchdog_env(
+    repo_root: Path, tmp_dir: Path
+) -> tuple[Path, Path, Path, Path]:
+    """Initialize test directory, dummy db, PID file, and compiled watchdog binary."""
     data_dir = tmp_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     (tmp_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -287,7 +305,61 @@ def _verify_dummy_watchdog(repo_root: Path, tmp_dir: Path) -> dict[str, Any]:
     _init_dummy_db(db_path, repo_root / "db" / "schema.sql")
     pid_path.write_text("999999\n", encoding="utf-8")
     _build_watchdog_binary(repo_root, bin_path)
+    return bin_path, db_path, pid_path, lockfile_path
 
+
+def _test_watchdog_gate_lifecycle(
+    data_dir: Path, db_path: Path, lockfile_path: Path
+) -> dict[str, Any]:
+    """Execute pre-killswitch, killswitch triggers, and post-killswitch assertions."""
+    status_init = _wait_for_watchdog("http://127.0.0.1:20130/v1/status")
+    order = {
+        "pair": "XAUUSDm",
+        "direction": "BUY",
+        "lot_size": 0.01,
+        "entry_price": 2000.0,
+        "sl_price": 1995.0,
+        "account_equity": 1000.0,
+    }
+    res_before = _http_request(
+        "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
+    )
+    if not res_before.get("allowed"):
+        raise AssertionError(f"Expected order allowed before killswitch: {res_before}")
+
+    db_failed_summary = _verify_killswitch_db_failed(lockfile_path)
+    res_after = _http_request(
+        "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
+    )
+    if (
+        res_after.get("allowed")
+        or res_after.get("reason") != "circuit_breaker_lock_active"
+    ):
+        raise AssertionError(f"Expected circuit_breaker_lock_active: {res_after}")
+
+    status_after = _http_request("http://127.0.0.1:20130/v1/status", method="GET")
+    if not status_after.get("killswitch_active"):
+        raise AssertionError(f"Expected killswitch_active=True: {status_after}")
+
+    db_avail_summary = _verify_killswitch_db_available(
+        db_path, data_dir / "AVAIL_KILLSWITCH.lock"
+    )
+    return {
+        "status_init": status_init,
+        "order_before": res_before,
+        "lockfile_payload": db_failed_summary["payload"],
+        "order_after": res_after,
+        "status_after": status_after,
+        "db_avail": db_avail_summary,
+        "db_failed": db_failed_summary,
+    }
+
+
+def _verify_dummy_watchdog(repo_root: Path, tmp_dir: Path) -> dict[str, Any]:
+    """Run full dummy E2E test verifying order gating before and after killswitch."""
+    bin_path, db_path, pid_path, lockfile_path = _prepare_watchdog_env(
+        repo_root, tmp_dir
+    )
     cmd = [
         str(bin_path),
         "-bind",
@@ -302,52 +374,12 @@ def _verify_dummy_watchdog(repo_root: Path, tmp_dir: Path) -> dict[str, Any]:
     )
     res: dict[str, Any] = {}
     try:
-        status_init = _wait_for_watchdog("http://127.0.0.1:20130/v1/status")
-        order = {
-            "pair": "XAUUSDm",
-            "direction": "BUY",
-            "lot_size": 0.01,
-            "entry_price": 2000.0,
-            "sl_price": 1995.0,
-            "account_equity": 1000.0,
-        }
-        res_before = _http_request(
-            "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
-        )
-        if not res_before.get("allowed"):
-            raise AssertionError(
-                f"Expected order allowed before killswitch: {res_before}"
-            )
-
-        db_failed_summary = _verify_killswitch_db_failed(lockfile_path)
-        res_after = _http_request(
-            "http://127.0.0.1:20130/v1/validate_order", method="POST", payload=order
-        )
-        if (
-            res_after.get("allowed")
-            or res_after.get("reason") != "circuit_breaker_lock_active"
-        ):
-            raise AssertionError(f"Expected circuit_breaker_lock_active: {res_after}")
-
-        status_after = _http_request("http://127.0.0.1:20130/v1/status", method="GET")
-        if not status_after.get("killswitch_active"):
-            raise AssertionError(f"Expected killswitch_active=True: {status_after}")
-
-        db_avail_summary = _verify_killswitch_db_available(
-            db_path, data_dir / "AVAIL_KILLSWITCH.lock"
-        )
-        res = {
-            "status_init": status_init,
-            "order_before": res_before,
-            "lockfile_payload": db_failed_summary["payload"],
-            "order_after": res_after,
-            "status_after": status_after,
-            "watchdog_pid": proc.pid,
-            "db_avail": db_avail_summary,
-            "db_failed": db_failed_summary,
-        }
+        res = _test_watchdog_gate_lifecycle(tmp_dir / "data", db_path, lockfile_path)
+        res["watchdog_pid"] = proc.pid
     finally:
-        res["exit_code"] = _stop_dummy_watchdog(proc)
+        exit_code, method = _stop_dummy_watchdog(proc)
+        res["exit_code"] = exit_code
+        res["termination_method"] = method
     return res
 
 
@@ -365,8 +397,8 @@ class _FakeTelegramTransport:
         return True
 
 
-def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
-    """Render synthetic OHLC PNG and verify Telegram dashboard admin publication."""
+def _render_and_validate_png() -> bytes:
+    """Render synthetic OHLC PNG and assert required PNG chunks and title marker."""
     candles: list[CandleDict] = [
         {
             "timestamp_utc": f"2026-11-20T12:{i * 15:02d}:00Z",
@@ -386,7 +418,11 @@ def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
     for chunk in (b"IHDR", b"IDAT", b"IEND", b"XAUUSD OBSERVATION"):
         if chunk not in png:
             raise AssertionError(f"Missing required marker {chunk!r}")
+    return png
 
+
+def _publish_and_validate_dashboard(png: bytes) -> dict[str, Any]:
+    """Verify SignalOnlyDashboard publish to admin and strict non-admin rejection."""
     admin_id, fake = 999_000_001, _FakeTelegramTransport()
     dash = SignalOnlyDashboard(
         client=fake, admin_chat_id=admin_id, reasoning_enabled=False
@@ -432,6 +468,83 @@ def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
     }
 
 
+def _verify_dummy_chart_and_dashboard() -> dict[str, Any]:
+    """Render synthetic OHLC PNG and verify Telegram dashboard admin publication."""
+    png = _render_and_validate_png()
+    return _publish_and_validate_dashboard(png)
+
+
+def _format_acceptance_section(
+    acceptance_results: list[dict[str, Any]],
+) -> list[str]:
+    """Format markdown table for acceptance command results."""
+    lines = [
+        "## 1. Acceptance Commands Matrix\n",
+        "| Command | Exit Code | Duration (s) | Status |",
+        "| :--- | :---: | :---: | :---: |",
+    ]
+    for it in acceptance_results:
+        tag = "PASS" if it["passed"] else "**FAIL**"
+        lines.append(
+            f"| `{it['command']}` | `{it['exit_code']}` | {it['duration_sec']} | {tag} |"
+        )
+    return lines
+
+
+def _format_watchdog_section(
+    watchdog_summary: dict[str, Any] | None,
+) -> list[str]:
+    """Format dummy watchdog E2E execution results without hardcoded status."""
+    lines = ["\n## 2. Dummy Watchdog Fail-Closed E2E\n"]
+    if watchdog_summary is None:
+        lines.append("- *Watchdog E2E skipped or failed prior to completion.*")
+        return lines
+
+    code = watchdog_summary.get("exit_code", 0)
+    method = watchdog_summary.get("termination_method", "unknown")
+    lines.extend(
+        [
+            f"- Watchdog Process: PID `{watchdog_summary['watchdog_pid']}` (exit_code={code}, termination_method=`{method}`)",
+            f"- Pre-Killswitch Order Check: `allowed={watchdog_summary['order_before'].get('allowed')}` (reason: `{watchdog_summary['order_before'].get('reason')}`)",
+            f"- Emergency Lockfile Payload: `{json.dumps(watchdog_summary['lockfile_payload'])}`",
+            f"- Post-Killswitch Order Check: `allowed={watchdog_summary['order_after'].get('allowed')}` (reason: `{watchdog_summary['order_after'].get('reason')}`)",
+            f"- Post-Killswitch Daemon Health: `killswitch_active={watchdog_summary['status_after'].get('killswitch_active')}`",
+        ]
+    )
+    if "db_avail" in watchdog_summary:
+        rec = watchdog_summary["db_avail"]
+        status = rec.get("status", "UNKNOWN")
+        lines.append(
+            f"- DB Available Persistence: `system_state={rec.get('system_state')}`, `handler.is_paused={rec.get('is_paused')}` (Status: {status})"
+        )
+    if "db_failed" in watchdog_summary:
+        rec = watchdog_summary["db_failed"]
+        status = rec.get("status", "UNKNOWN")
+        note = rec.get("note")
+        note_str = f" - {note}" if note else ""
+        lines.append(
+            f"- DB Failed Persistence: `lockfile_written={rec.get('lockfile_written')}`, `db_persisted={rec.get('db_persisted')}` (Status: {status}{note_str})"
+        )
+    return lines
+
+
+def _format_chart_section(chart_summary: dict[str, Any] | None) -> list[str]:
+    """Format dummy chart and Telegram publication check results."""
+    lines = ["\n## 3. Dummy Chart & Admin Observation Card\n"]
+    if chart_summary is not None:
+        lines.extend(
+            [
+                f"- Rendered PNG Size: `{chart_summary['photo_bytes_len']}` bytes with verified magic and metadata title",
+                f"- Admin Transport Delivery: Sent to whitelist chat ID `{chart_summary['admin_chat_id']}`",
+                "- Admin Whitelist Security: Non-admin publish attempt strictly rejected",
+                "- Caption Purity: All financial and trading instruction tokens confirmed absent",
+            ]
+        )
+    else:
+        lines.append("- *Chart verification skipped or failed prior to completion.*")
+    return lines
+
+
 def _build_markdown_report(
     commit_hash: str,
     acceptance_results: list[dict[str, Any]],
@@ -446,66 +559,16 @@ def _build_markdown_report(
         f"- **Timestamp (UTC)**: `{now_utc}`",
         f"- **Git Commit**: `{commit_hash}`",
         f"- **Final Verdict**: **`{verdict}`**\n",
-        "## 1. Acceptance Commands Matrix\n",
-        "| Command | Exit Code | Duration (s) | Status |",
-        "| :--- | :---: | :---: | :---: |",
     ]
-    for it in acceptance_results:
-        tag = "PASS" if it["passed"] else "**FAIL**"
-        lines.append(
-            f"| `{it['command']}` | `{it['exit_code']}` | {it['duration_sec']} | {tag} |"
-        )
-    lines.append("\n## 2. Dummy Watchdog Fail-Closed E2E\n")
-    if watchdog_summary is not None:
-        exit_code_str = f"exit_code={watchdog_summary.get('exit_code', 0)}"
-        lines.extend(
-            [
-                f"- Watchdog Process: PID `{watchdog_summary['watchdog_pid']}` ({exit_code_str})",
-                f"- Pre-Killswitch Order Check: `allowed={watchdog_summary['order_before'].get('allowed')}` (reason: `{watchdog_summary['order_before'].get('reason')}`)",
-                f"- Emergency Lockfile Payload: `{json.dumps(watchdog_summary['lockfile_payload'])}`",
-                f"- Post-Killswitch Order Check: `allowed={watchdog_summary['order_after'].get('allowed')}` (reason: `{watchdog_summary['order_after'].get('reason')}`)",
-                f"- Post-Killswitch Daemon Health: `killswitch_active={watchdog_summary['status_after'].get('killswitch_active')}`",
-            ]
-        )
-        if "db_avail" in watchdog_summary:
-            lines.append(
-                f"- DB Available Persistence: `system_state={watchdog_summary['db_avail'].get('system_state')}`, `handler.is_paused={watchdog_summary['db_avail'].get('is_paused')}` (Status: PASS)"
-            )
-        if "db_failed" in watchdog_summary:
-            lines.append(
-                f"- DB Failed Persistence: `lockfile_written={watchdog_summary['db_failed'].get('lockfile_written')}`, `db_persisted={watchdog_summary['db_failed'].get('db_persisted')}` (Status: PARTIAL/WARN - fallback degraded)"
-            )
-    else:
-        lines.append("- *Watchdog E2E skipped or failed prior to completion.*")
-    lines.append("\n## 3. Dummy Chart & Admin Observation Card\n")
-    if chart_summary is not None:
-        lines.extend(
-            [
-                f"- Rendered PNG Size: `{chart_summary['photo_bytes_len']}` bytes with verified magic and metadata title",
-                f"- Admin Transport Delivery: Sent to whitelist chat ID `{chart_summary['admin_chat_id']}`",
-                "- Admin Whitelist Security: Non-admin publish attempt strictly rejected",
-                "- Caption Purity: All financial and trading instruction tokens confirmed absent",
-            ]
-        )
-    else:
-        lines.append("- *Chart verification skipped or failed prior to completion.*")
+    lines.extend(_format_acceptance_section(acceptance_results))
+    lines.extend(_format_watchdog_section(watchdog_summary))
+    lines.extend(_format_chart_section(chart_summary))
     lines.extend(["\n## 4. Verdict Summary\n", f"**`{verdict}`**\n"])
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Parse CLI options, execute verification harness, write report, and exit."""
-    parser = argparse.ArgumentParser(
-        description="AETERNA Runtime Readiness Verification Harness"
-    )
-    parser.add_argument(
-        "--out",
-        default=".handoff/e2e/AUTO_READINESS-LAST.md",
-        help="Target Markdown report path",
-    )
-    args = parser.parse_args(argv)
-
-    repo_root = Path(__file__).resolve().parent.parent
+def _get_current_git_commit(repo_root: Path) -> str:
+    """Resolve current Git commit hash of HEAD deterministically."""
     c_res = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo_root,
@@ -513,8 +576,13 @@ def main(argv: list[str] | None = None) -> int:
         text=True,
         check=False,
     )
-    commit_hash = c_res.stdout.strip() if c_res.returncode == 0 else "UNKNOWN"
+    return c_res.stdout.strip() if c_res.returncode == 0 else "UNKNOWN"
 
+
+def _run_readiness_checks(
+    repo_root: Path,
+) -> tuple[bool, list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
+    """Execute acceptance suite, dummy watchdog E2E, and chart dashboard checks."""
     watchdog_summary: dict[str, Any] | None = None
     chart_summary: dict[str, Any] | None = None
     all_passed, acceptance_results = _run_acceptance_suite(repo_root)
@@ -535,6 +603,27 @@ def main(argv: list[str] | None = None) -> int:
         ) as exc:
             all_passed = False
             sys.stderr.write(f"Readiness verification error: {exc}\n")
+
+    return all_passed, acceptance_results, watchdog_summary, chart_summary
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse CLI options, execute verification harness, write report, and exit."""
+    parser = argparse.ArgumentParser(
+        description="AETERNA Runtime Readiness Verification Harness"
+    )
+    parser.add_argument(
+        "--out",
+        default=".handoff/e2e/AUTO_READINESS-LAST.md",
+        help="Target Markdown report path",
+    )
+    args = parser.parse_args(argv)
+
+    repo_root = Path(__file__).resolve().parent.parent
+    commit_hash = _get_current_git_commit(repo_root)
+    all_passed, acceptance_results, watchdog_summary, chart_summary = (
+        _run_readiness_checks(repo_root)
+    )
 
     verdict = "AUTO_READINESS_PASS" if all_passed else "AUTO_READINESS_FAIL"
     report = _build_markdown_report(
