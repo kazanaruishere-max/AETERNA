@@ -37,10 +37,10 @@ from engine.security.dpapi import (
 def _make_dummy_credentials() -> dict[str, Any]:
     """Return dummy non-sensitive credential dictionary for testing."""
     return {
-        "telegram_bot_token": SecretString.from_plaintext("dummy_token"),
+        "telegram_bot_token": SecretString(_cipher_bytes=b"dummy_token_cipher"),
         "telegram_admin_id": 123456789,
         "mt5_login": 98765432,
-        "mt5_password": SecretString.from_plaintext("dummy_password"),
+        "mt5_password": SecretString(_cipher_bytes=b"dummy_password_cipher"),
         "mt5_server": "Demo-Server",
     }
 
