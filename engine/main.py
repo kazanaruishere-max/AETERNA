@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
@@ -26,7 +27,10 @@ from engine.execution.emergency_handler import EmergencyHandler
 from engine.ingestion.python.exness_client import ExnessClient
 from engine.monitoring.types import DailyMetrics
 from engine.runtime.bootstrap import build_runtime_bundle
-from engine.security.dpapi import DEFAULT_SECRETS_PATH, load_trading_secrets
+from engine.security.dpapi import (
+    DEFAULT_SECRETS_PATH,
+    load_trading_secrets_with_source,
+)
 from engine.security.log_sanitizer import LogSanitizer
 from engine.telegram_bot.auth import (
     InMemoryEphemeralStore,
@@ -55,6 +59,29 @@ def setup_runtime_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(handler)
+
+
+DEFAULT_CALENDAR_SNAPSHOT_PATH = "data/calendar_snapshot.json"
+
+
+def resolve_calendar_snapshot_path(
+    env_vars: dict[str, str] | None = None,
+) -> str:
+    """Resolve economic calendar snapshot path from environment variable with fallback.
+
+    Args:
+        env_vars: Optional dictionary for testing; defaults to os.environ.
+
+    Returns:
+        str: Absolute or relative path to the calendar snapshot JSON file.
+    """
+    if env_vars is not None:
+        raw = env_vars.get("CALENDAR_SNAPSHOT_PATH")
+    else:
+        raw = os.getenv("CALENDAR_SNAPSHOT_PATH")
+    if raw is not None and raw.strip():
+        return raw.strip()
+    return DEFAULT_CALENDAR_SNAPSHOT_PATH
 
 
 class RuntimeMetricsCollector:
@@ -124,7 +151,8 @@ async def main_async() -> int:
 
     # 1. Verify and load credentials (.secrets.enc DPAPI or .env fallback)
     try:
-        secrets = load_trading_secrets(DEFAULT_SECRETS_PATH)
+        secrets, cred_source = load_trading_secrets_with_source(DEFAULT_SECRETS_PATH)
+        logger.info("CREDENTIAL_SOURCE=%s", cred_source)
         logger.info("Loaded trading credentials into secure memory successfully")
     except FileNotFoundError as exc:
         logger.error(
@@ -215,6 +243,7 @@ async def main_async() -> int:
     logger.info("MODE=SIGNAL_ONLY LIVE_ORDER=DISABLED")
 
     # 6. Build RuntimeBundle — only if MT5 is connected
+    calendar_snapshot_path = resolve_calendar_snapshot_path()
     runtime_bundle = None
     if control_bot is not None and tg_admin_id:
         if exness.connected:
@@ -222,6 +251,7 @@ async def main_async() -> int:
                 exness_client=exness,
                 control_bot=control_bot,
                 admin_chat_id=tg_admin_id,
+                calendar_snapshot_path=calendar_snapshot_path,
             )
             logger.info("RuntimeBundle built for symbol=XAUUSDm")
         else:
