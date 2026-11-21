@@ -336,19 +336,31 @@ def load_credentials_from_env() -> dict[str, Any] | None:
     return res
 
 
-def load_trading_secrets(
+def load_trading_secrets_with_source(
     filepath: Path | str = DEFAULT_SECRETS_PATH,
     entropy: bytes = DEFAULT_APP_ENTROPY,
-) -> dict[str, Any]:
-    """Unified credential loader: checks .env first for quick local developer override, then DPAPI (.secrets.enc)."""
+) -> tuple[dict[str, Any], str]:
+    """Unified credential loader returning secrets dict and credential source ('ENV' or 'DPAPI').
+
+    Args:
+        filepath: Path to .secrets.enc DPAPI encrypted file.
+        entropy: Application salt bytes.
+
+    Returns:
+        tuple[dict[str, Any], str]: Decrypted/parsed secrets and source identifier ('ENV' or 'DPAPI').
+
+    Raises:
+        FileNotFoundError: If neither .env credentials nor DPAPI secrets file could be loaded.
+    """
     env_creds = load_credentials_from_env()
     if env_creds:
-        return env_creds
+        return env_creds, "ENV"
 
     path = Path(filepath)
     if path.is_file():
         try:
-            return load_encrypted_secrets(path, entropy=entropy)
+            secrets = load_encrypted_secrets(path, entropy=entropy)
+            return secrets, "DPAPI"
         except (DPAPIError, OSError, ValueError) as exc:
             logger.warning(
                 "Failed to decrypt DPAPI secrets (%s), no credentials found...", exc
@@ -357,6 +369,15 @@ def load_trading_secrets(
     raise FileNotFoundError(
         "No credentials found. Either create .env (see .env.example) or run: uv run python scripts/setup_secrets.py"
     )
+
+
+def load_trading_secrets(
+    filepath: Path | str = DEFAULT_SECRETS_PATH,
+    entropy: bytes = DEFAULT_APP_ENTROPY,
+) -> dict[str, Any]:
+    """Unified credential loader: checks .env first for quick local developer override, then DPAPI (.secrets.enc)."""
+    secrets, _ = load_trading_secrets_with_source(filepath=filepath, entropy=entropy)
+    return secrets
 
 
 def load_encrypted_secrets(
