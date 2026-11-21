@@ -32,21 +32,23 @@ logger = logging.getLogger("aeterna.execution.position_manager")
 class PositionState:
     """Immutable model representing an active trading position state in memory."""
 
-    ticket: int                        # Current active MT5 ticket (mutates post-partial close)
-    position_identifier: int           # Permanent unique MT5 position identifier (POSITION_IDENTIFIER)
+    ticket: int  # Current active MT5 ticket (mutates post-partial close)
+    position_identifier: (
+        int  # Permanent unique MT5 position identifier (POSITION_IDENTIFIER)
+    )
     symbol: str
     direction: OrderDirection
     open_price: float
-    current_lot: float                 # Active remaining volume
+    current_lot: float  # Active remaining volume
     initial_sl: float
     current_sl: float
     tp: float
-    initial_r_pts: float               # |open_price - initial_sl|
-    spread_at_entry_usd: float         # Entry spread cost in USD for absolute BE offset
-    be_sl_modified: bool = False       # Layer 2 capital protection flag
-    partial_closed: bool = False       # Layer 3 take-profit flag
-    last_modify_time_mono: float = 0.0 # Monotonic timestamp of last modification
-    elapsed_bars_m15: int = 0          # Number of closed M15 bars elapsed since entry
+    initial_r_pts: float  # |open_price - initial_sl|
+    spread_at_entry_usd: float  # Entry spread cost in USD for absolute BE offset
+    be_sl_modified: bool = False  # Layer 2 capital protection flag
+    partial_closed: bool = False  # Layer 3 take-profit flag
+    last_modify_time_mono: float = 0.0  # Monotonic timestamp of last modification
+    elapsed_bars_m15: int = 0  # Number of closed M15 bars elapsed since entry
 
     def with_break_even_sl(self, new_sl: float, timestamp_mono: float) -> PositionState:
         """Return new state after successful SL break-even or trailing modification."""
@@ -68,7 +70,9 @@ class PositionState:
             elapsed_bars_m15=self.elapsed_bars_m15,
         )
 
-    def with_partial_close(self, new_ticket: int, remaining_lot: float) -> PositionState:
+    def with_partial_close(
+        self, new_ticket: int, remaining_lot: float
+    ) -> PositionState:
         """Return new state after successful partial close and ticket re-anchoring."""
         return PositionState(
             ticket=new_ticket,
@@ -121,6 +125,7 @@ class PositionManager:
         deadband_usd: float = 0.20,
         be_trigger_r: float = 1.0,
         trailing_ratchet_r: float = 2.0,
+        active_position: PositionState | None = None,
     ) -> None:
         self.bridge = bridge
         self.stops_level_buffer_pts = stops_level_buffer_pts
@@ -129,6 +134,58 @@ class PositionManager:
         self.deadband_usd = deadband_usd
         self.be_trigger_r = float(be_trigger_r)
         self.trailing_ratchet_r = float(trailing_ratchet_r)
+        self.active_position = active_position
+        self.active_positions: dict[int, PositionState] = {}
+        if active_position is not None:
+            self.active_positions[active_position.ticket] = active_position
+
+    def track_position(self, pos: PositionState) -> None:
+        """Register or update an active position in memory."""
+        self.active_position = pos
+        self.active_positions[pos.ticket] = pos
+
+    def untrack_position(self, ticket: int) -> PositionState | None:
+        """Remove a position from active tracking."""
+        if self.active_position is not None and self.active_position.ticket == ticket:
+            self.active_position = None
+        return self.active_positions.pop(ticket, None)
+
+    def get_active_positions(self) -> list[PositionState]:
+        """Return all tracked active positions."""
+        if self.active_positions:
+            return list(self.active_positions.values())
+        if self.active_position is not None:
+            return [self.active_position]
+        return []
+
+    def evaluate_bar_closed(
+        self,
+        current_tick: Any,
+        symbol_info: Any,
+        now_mono: float | None = None,
+    ) -> list[tuple[PositionState, ModifyResult | None, PartialCloseResult | None]]:
+        """Evaluate active positions on M15 close with bar_closed=True (exactly once per closed bar)."""
+        results: list[
+            tuple[PositionState, ModifyResult | None, PartialCloseResult | None]
+        ] = []
+        positions = self.get_active_positions()
+        for pos in positions:
+            res_pos, mod_res, close_res = self.evaluate_trailing_and_scaleout(
+                pos=pos,
+                current_tick=current_tick,
+                symbol_info=symbol_info,
+                now_mono=now_mono,
+                bar_closed=True,
+            )
+            if res_pos.current_lot <= 0.0:
+                self.untrack_position(pos.ticket)
+            elif res_pos.ticket != pos.ticket:
+                self.untrack_position(pos.ticket)
+                self.track_position(res_pos)
+            else:
+                self.track_position(res_pos)
+            results.append((res_pos, mod_res, close_res))
+        return results
 
     def calculate_break_even_sl(self, pos: PositionState) -> float:
         """Calculate break-even SL using absolute entry spread and slippage cushion."""
@@ -137,12 +194,18 @@ class PositionManager:
             return round(pos.open_price + be_offset_usd, 2)
         return round(pos.open_price - be_offset_usd, 2)
 
-    def calculate_min_stop_distance_usd(self, current_tick: Any, symbol_info: Any) -> float:
+    def calculate_min_stop_distance_usd(
+        self, current_tick: Any, symbol_info: Any
+    ) -> float:
         """Calculate spread-aware minimum stop distance in USD to prevent Error 10016 TOO_CLOSE."""
         stops_level_pts = float(getattr(symbol_info, "trade_stops_level", 0.0))
         point_size = float(getattr(symbol_info, "point", 0.01))
-        current_spread_pts = (float(current_tick.ask) - float(current_tick.bid)) / point_size
-        min_stop_distance_pts = max(stops_level_pts, current_spread_pts) + self.stops_level_buffer_pts
+        current_spread_pts = (
+            float(current_tick.ask) - float(current_tick.bid)
+        ) / point_size
+        min_stop_distance_pts = (
+            max(stops_level_pts, current_spread_pts) + self.stops_level_buffer_pts
+        )
         return min_stop_distance_pts * point_size
 
     @staticmethod
@@ -158,7 +221,9 @@ class PositionManager:
         remaining_lot = round(current_lot - close_lot, 2)
         return close_lot, remaining_lot
 
-    def _execute_partial_close(self, pos: PositionState) -> tuple[PositionState, PartialCloseResult]:
+    def _execute_partial_close(
+        self, pos: PositionState
+    ) -> tuple[PositionState, PartialCloseResult]:
         """Execute 50% partial close deal and re-anchor new ticket via POSITION_IDENTIFIER."""
         close_lot, expected_rem_lot = self.resolve_partial_close_lot(pos.current_lot)
         close_res = self.bridge.close_partial_position(
@@ -169,11 +234,21 @@ class PositionManager:
             close_lot=close_lot,
         )
         if close_res.success:
-            new_ticket = close_res.new_ticket if close_res.new_ticket is not None else pos.ticket
-            rem_lot = close_res.remaining_lot if close_res.remaining_lot > 0.0 else expected_rem_lot
+            new_ticket = (
+                close_res.new_ticket if close_res.new_ticket is not None else pos.ticket
+            )
+            rem_lot = (
+                close_res.remaining_lot
+                if close_res.remaining_lot > 0.0
+                else expected_rem_lot
+            )
             pos = pos.with_partial_close(new_ticket=new_ticket, remaining_lot=rem_lot)
         else:
-            logger.warning("Partial close deal failed for ticket %s: %s", pos.ticket, close_res.error_message)
+            logger.warning(
+                "Partial close deal failed for ticket %s: %s",
+                pos.ticket,
+                close_res.error_message,
+            )
         return pos, close_res
 
     def _evaluate_break_even_and_scaleout(
@@ -198,7 +273,10 @@ class PositionManager:
         target_sl = self.calculate_break_even_sl(pos)
         min_stop_usd = self.calculate_min_stop_distance_usd(current_tick, symbol_info)
         market_dist = (bid - target_sl) if pos.direction == "BUY" else (target_sl - ask)
-        if market_dist < min_stop_usd or abs(target_sl - pos.current_sl) < self.deadband_usd:
+        if (
+            market_dist < min_stop_usd
+            or abs(target_sl - pos.current_sl) < self.deadband_usd
+        ):
             return pos, None, None
         if (now - pos.last_modify_time_mono) < self.cooldown_seconds:
             return pos, None, None
@@ -207,12 +285,17 @@ class PositionManager:
             ticket=pos.ticket, symbol=pos.symbol, new_sl=target_sl, new_tp=pos.tp
         )
         if not mod_res.success:
-            logger.warning("BE SL modify failed for %s: withholding partial close", pos.ticket)
+            logger.warning(
+                "BE SL modify failed for %s: withholding partial close", pos.ticket
+            )
             return dataclasses.replace(pos, last_modify_time_mono=now), mod_res, None
 
         pos = pos.with_break_even_sl(target_sl, now)
         if pos.current_lot <= 0.01:
-            logger.info("Partial close skipped for %s: lot <= 0.01 (SKIPPED_MIN_LOT)", pos.ticket)
+            logger.info(
+                "Partial close skipped for %s: lot <= 0.01 (SKIPPED_MIN_LOT)",
+                pos.ticket,
+            )
             return pos, mod_res, None
 
         pos, close_res = self._execute_partial_close(pos)
@@ -231,12 +314,18 @@ class PositionManager:
 
         if pos.direction == "BUY":
             proposed_sl = round(bid - pos.initial_r_pts, 2)
-            if proposed_sl <= pos.current_sl or (proposed_sl - pos.current_sl) < self.deadband_usd:
+            if (
+                proposed_sl <= pos.current_sl
+                or (proposed_sl - pos.current_sl) < self.deadband_usd
+            ):
                 return pos, None
             market_dist = bid - proposed_sl
         else:
             proposed_sl = round(ask + pos.initial_r_pts, 2)
-            if proposed_sl >= pos.current_sl or (pos.current_sl - proposed_sl) < self.deadband_usd:
+            if (
+                proposed_sl >= pos.current_sl
+                or (pos.current_sl - proposed_sl) < self.deadband_usd
+            ):
                 return pos, None
             market_dist = proposed_sl - ask
 
@@ -308,10 +397,15 @@ class PositionManager:
         if time_inv_res is not None:
             return pos, None, time_inv_res
 
+        if current_tick is None or symbol_info is None:
+            return pos, None, None
+
         now = time.monotonic() if now_mono is None else float(now_mono)
 
         if not pos.be_sl_modified:
-            return self._evaluate_break_even_and_scaleout(pos, current_tick, symbol_info, now)
+            return self._evaluate_break_even_and_scaleout(
+                pos, current_tick, symbol_info, now
+            )
 
         if not pos.partial_closed and pos.current_lot > 0.01:
             pos, close_res = self._execute_partial_close(pos)
@@ -328,7 +422,9 @@ class PositionManager:
     @staticmethod
     def is_rollover_window(dt_utc: datetime) -> bool:
         """Lapis 5 Pre-Rollover Force Close: 15 mins before daily break (20:44 UTC summer, 21:44 UTC winter)."""
-        return (dt_utc.hour == 20 and dt_utc.minute >= 44) or (dt_utc.hour == 21 and dt_utc.minute >= 44)
+        return (dt_utc.hour == 20 and dt_utc.minute >= 44) or (
+            dt_utc.hour == 21 and dt_utc.minute >= 44
+        )
 
     @staticmethod
     def is_regime_invalidated(direction: OrderDirection, current_regime: str) -> bool:
