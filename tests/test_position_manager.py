@@ -149,16 +149,26 @@ def test_dynamic_spread_aware_stop_level_guard() -> None:
     assert not new_pos.be_sl_modified
 
     # When market advances so distance >= 5.0 USD (bid 2762.0 -> distance 6.0 USD)
-    mock_bridge.modify_position_sltp.return_value = ModifyResult(True, 10001, 2756.0, 2780.0)
-    mock_bridge.close_partial_position.return_value = PartialCloseResult(True, 10001, 10002, 0.02, 0.02, 2762.0)
+    mock_bridge.modify_position_sltp.return_value = ModifyResult(
+        True, 10001, 2756.0, 2780.0
+    )
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        True, 10001, 10002, 0.02, 0.02, 2762.0
+    )
     tick_wide = DummyTick(bid=2762.0, ask=2766.5)
-    _, mod_ok, _ = pm.evaluate_trailing_and_scaleout(pos_tight, tick_wide, symbol_info, now_mono=10.0)
-    assert mod_ok and mod_ok.success and mock_bridge.modify_position_sltp.call_count == 1
+    _, mod_ok, _ = pm.evaluate_trailing_and_scaleout(
+        pos_tight, tick_wide, symbol_info, now_mono=10.0
+    )
+    assert (
+        mod_ok and mod_ok.success and mock_bridge.modify_position_sltp.call_count == 1
+    )
 
 
 def test_break_even_offset_guarantees_non_negative_net_pnl() -> None:
     """Verify Entry 2750.00, entry spread 0.35, cushion 0.20 yields Net PnL >= 0.0."""
-    pm = PositionManager(bridge=MagicMock(spec=ExnessBrokerBridge), slippage_cushion_usd=0.20)
+    pm = PositionManager(
+        bridge=MagicMock(spec=ExnessBrokerBridge), slippage_cushion_usd=0.20
+    )
 
     # BUY position
     pos_buy = _create_sample_buy_pos()
@@ -168,7 +178,9 @@ def test_break_even_offset_guarantees_non_negative_net_pnl() -> None:
     assert math.isclose(net_pnl_buy, 0.20, abs_tol=1e-6) and net_pnl_buy >= 0.0
 
     # SELL position
-    pos_sell = PositionState(20001, 8888, "XAUUSD", "SELL", 2750.0, 0.04, 2760.0, 2760.0, 2730.0, 10.0, 0.35)
+    pos_sell = PositionState(
+        20001, 8888, "XAUUSD", "SELL", 2750.0, 0.04, 2760.0, 2760.0, 2730.0, 10.0, 0.35
+    )
     sl_be_sell = pm.calculate_break_even_sl(pos_sell)
     assert sl_be_sell == 2749.45
     net_pnl_sell = (pos_sell.open_price - sl_be_sell) - pos_sell.spread_at_entry_usd
@@ -193,7 +205,9 @@ def test_partial_close_lot_resolution_odd_numbers() -> None:
 def test_partial_close_skipped_for_minimum_lot_0_01() -> None:
     """Verify lot 0.01 at +1.0R skips partial close deal while safely advancing SL to Break-Even."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
-    mock_bridge.modify_position_sltp.return_value = ModifyResult(True, 10001, 2750.55, 2770.0)
+    mock_bridge.modify_position_sltp.return_value = ModifyResult(
+        True, 10001, 2750.55, 2770.0
+    )
 
     pm = PositionManager(bridge=mock_bridge)
     pos_min = _create_sample_buy_pos(current_lot=0.01)
@@ -210,8 +224,12 @@ def test_partial_close_skipped_for_minimum_lot_0_01() -> None:
 def test_ticket_re_anchoring_post_partial_close() -> None:
     """Verify ticket changes from #10001 to #10002 post-partial close via POSITION_IDENTIFIER 9999."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
-    mock_bridge.modify_position_sltp.return_value = ModifyResult(True, 10001, 2750.55, 2770.0)
-    mock_bridge.close_partial_position.return_value = PartialCloseResult(True, 10001, 10002, 0.02, 0.02, 2760.5)
+    mock_bridge.modify_position_sltp.return_value = ModifyResult(
+        True, 10001, 2750.55, 2770.0
+    )
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        True, 10001, 10002, 0.02, 0.02, 2760.5
+    )
 
     pm = PositionManager(bridge=mock_bridge)
     pos = _create_sample_buy_pos(current_lot=0.04)
@@ -227,21 +245,30 @@ def test_ticket_re_anchoring_post_partial_close() -> None:
 def test_cooldown_anti_spam() -> None:
     """Verify modify request within < 2.0s cooldown interval is skipped."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
-    mock_bridge.modify_position_sltp.return_value = ModifyResult(True, 10001, 2755.0, 2770.0)
+    mock_bridge.modify_position_sltp.return_value = ModifyResult(
+        True, 10001, 2755.0, 2770.0
+    )
 
     pm = PositionManager(bridge=mock_bridge, cooldown_seconds=2.0)
     pos = _create_sample_buy_pos(
-        be_sl_modified=True, partial_closed=True, current_sl=2750.55, last_modify_time_mono=100.0
+        be_sl_modified=True,
+        partial_closed=True,
+        current_sl=2750.55,
+        last_modify_time_mono=100.0,
     )
     tick = DummyTick(bid=2765.0, ask=2765.3)
 
     # 1. At now_mono = 101.5 (1.5s < 2.0s): MUST SKIP
-    new_pos_cool, mod_cool, _ = pm.evaluate_trailing_and_scaleout(pos, tick, DEFAULT_INFO, now_mono=101.5)
+    new_pos_cool, mod_cool, _ = pm.evaluate_trailing_and_scaleout(
+        pos, tick, DEFAULT_INFO, now_mono=101.5
+    )
     assert mod_cool is None and new_pos_cool.current_sl == 2750.55
     mock_bridge.modify_position_sltp.assert_not_called()
 
     # 2. At now_mono = 102.5 (2.5s >= 2.0s): ALLOWED
-    new_pos_ok, mod_ok, _ = pm.evaluate_trailing_and_scaleout(pos, tick, DEFAULT_INFO, now_mono=102.5)
+    new_pos_ok, mod_ok, _ = pm.evaluate_trailing_and_scaleout(
+        pos, tick, DEFAULT_INFO, now_mono=102.5
+    )
     assert mod_ok and mod_ok.success and new_pos_ok.current_sl == 2755.0
     mock_bridge.modify_position_sltp.assert_called_once_with(
         ticket=10001, symbol="XAUUSD", new_sl=2755.0, new_tp=2770.0
@@ -255,17 +282,39 @@ def test_trailing_stop_advances_only_in_profit_direction() -> None:
 
     # BUY position: current_sl = 2755.00, retrace to bid 2763.0 (proposed 2753.0 < 2755.0) -> SKIP
     pos_buy = _create_sample_buy_pos(
-        be_sl_modified=True, partial_closed=True, current_sl=2755.0, last_modify_time_mono=50.0
+        be_sl_modified=True,
+        partial_closed=True,
+        current_sl=2755.0,
+        last_modify_time_mono=50.0,
     )
     tick_retrace = DummyTick(bid=2763.0, ask=2763.3)
-    new_pos, mod_res, _ = pm.evaluate_trailing_and_scaleout(pos_buy, tick_retrace, DEFAULT_INFO, now_mono=100.0)
+    new_pos, mod_res, _ = pm.evaluate_trailing_and_scaleout(
+        pos_buy, tick_retrace, DEFAULT_INFO, now_mono=100.0
+    )
     assert mod_res is None and new_pos.current_sl == 2755.0
     mock_bridge.modify_position_sltp.assert_not_called()
 
     # SELL position: current_sl = 2745.00, retrace to ask 2738.0 (proposed 2748.0 > 2745.0) -> SKIP
-    pos_sell = PositionState(20001, 8888, "XAUUSD", "SELL", 2750.0, 0.02, 2760.0, 2745.0, 2730.0, 10.0, 0.35, True, True, 50.0)
+    pos_sell = PositionState(
+        20001,
+        8888,
+        "XAUUSD",
+        "SELL",
+        2750.0,
+        0.02,
+        2760.0,
+        2745.0,
+        2730.0,
+        10.0,
+        0.35,
+        True,
+        True,
+        50.0,
+    )
     tick_sell_retrace = DummyTick(bid=2737.7, ask=2738.0)
-    new_pos_s, mod_s, _ = pm.evaluate_trailing_and_scaleout(pos_sell, tick_sell_retrace, DEFAULT_INFO, now_mono=100.0)
+    new_pos_s, mod_s, _ = pm.evaluate_trailing_and_scaleout(
+        pos_sell, tick_sell_retrace, DEFAULT_INFO, now_mono=100.0
+    )
     assert mod_s is None and new_pos_s.current_sl == 2745.0
     mock_bridge.modify_position_sltp.assert_not_called()
 
@@ -277,7 +326,12 @@ def test_broker_bridge_modify_position_sltp_success() -> None:
 
     bridge = ExnessBrokerBridge(client)
     res = bridge.modify_position_sltp(10001, "XAUUSD", 2750.55, 2770.0)
-    assert res.success and res.ticket == 10001 and res.new_sl == 2750.55 and res.new_tp == 2770.0
+    assert (
+        res.success
+        and res.ticket == 10001
+        and res.new_sl == 2750.55
+        and res.new_tp == 2770.0
+    )
 
     mock_mt5.order_send.assert_called_once()
     payload = mock_mt5.order_send.call_args[0][0]
@@ -298,11 +352,17 @@ def test_broker_bridge_close_partial_position_and_reanchor() -> None:
     bridge = ExnessBrokerBridge(client)
     res = bridge.close_partial_position(10001, 9999, "XAUUSD", "BUY", 0.02)
     assert res.success and res.closed_ticket == 10001 and res.new_ticket == 10002
-    assert res.closed_lot == 0.02 and res.remaining_lot == 0.02 and res.executed_price == 2760.5
+    assert (
+        res.closed_lot == 0.02
+        and res.remaining_lot == 0.02
+        and res.executed_price == 2760.5
+    )
 
     mock_mt5.order_send.assert_called_once()
     payload = mock_mt5.order_send.call_args[0][0]
-    assert payload["action"] == 1 and payload["position"] == 10001 and payload["type"] == 1  # SELL
+    assert (
+        payload["action"] == 1 and payload["position"] == 10001 and payload["type"] == 1
+    )  # SELL
     assert payload["deviation"] == 20
     mock_mt5.positions_get.assert_called_once_with(symbol="XAUUSD")
 
@@ -361,6 +421,7 @@ def test_lapis_4_and_5_invalidation_rules() -> None:
 
     # Lapis 5: Rollover window (20:44+ UTC and 21:44+ UTC)
     from datetime import UTC, datetime
+
     dt_normal = datetime(2024, 7, 15, 14, 0, tzinfo=UTC)
     dt_summer_rollover = datetime(2024, 7, 15, 20, 45, tzinfo=UTC)
     dt_winter_rollover = datetime(2024, 1, 15, 21, 50, tzinfo=UTC)
@@ -392,7 +453,12 @@ def test_position_manager_on_bar_closed() -> None:
     """Verify on_bar_closed advances bar counter and liquidates at 8 bars."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
     mock_bridge.close_partial_position.return_value = PartialCloseResult(
-        success=True, closed_ticket=10001, new_ticket=None, closed_lot=0.04, remaining_lot=0.0, executed_price=2755.0
+        success=True,
+        closed_ticket=10001,
+        new_ticket=None,
+        closed_lot=0.04,
+        remaining_lot=0.0,
+        executed_price=2755.0,
     )
     pm = PositionManager(bridge=mock_bridge)
     pos = _create_sample_buy_pos(current_lot=0.04)
@@ -416,7 +482,12 @@ def test_evaluate_time_invalidation_active_evaluation_path() -> None:
     """Verify counter advances naturally in real evaluation path to 8 bars and triggers liquidation."""
     mock_bridge = MagicMock(spec=ExnessBrokerBridge)
     mock_bridge.close_partial_position.return_value = PartialCloseResult(
-        success=True, closed_ticket=10001, new_ticket=None, closed_lot=0.04, remaining_lot=0.0, executed_price=2755.0
+        success=True,
+        closed_ticket=10001,
+        new_ticket=None,
+        closed_lot=0.04,
+        remaining_lot=0.0,
+        executed_price=2755.0,
     )
     pm = PositionManager(bridge=mock_bridge)
 
@@ -450,4 +521,113 @@ def test_evaluate_time_invalidation_active_evaluation_path() -> None:
     )
 
 
+def test_bar_closed_increments_counter_and_bar_closed_false_does_not() -> None:
+    """Verify bar_closed=True increments elapsed_bars_m15 while bar_closed=False does not."""
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    pm = PositionManager(bridge=mock_bridge)
+    pos = _create_sample_buy_pos(current_lot=0.04)
+    tick = DummyTick(bid=2751.0, ask=2751.3)
 
+    assert pos.elapsed_bars_m15 == 0
+
+    # bar_closed=False (tick evaluation): counter must NOT increment
+    pos_tick, _, _ = pm.evaluate_trailing_and_scaleout(
+        pos, tick, DEFAULT_INFO, now_mono=1.0, bar_closed=False
+    )
+    assert pos_tick.elapsed_bars_m15 == 0
+
+    # bar_closed=True (closed M15 bar): counter increments by 1
+    pos_bar1, _, _ = pm.evaluate_trailing_and_scaleout(
+        pos_tick, tick, DEFAULT_INFO, now_mono=2.0, bar_closed=True
+    )
+    assert pos_bar1.elapsed_bars_m15 == 1
+
+    # Another tick: counter stays 1
+    pos_tick2, _, _ = pm.evaluate_trailing_and_scaleout(
+        pos_bar1, tick, DEFAULT_INFO, now_mono=3.0, bar_closed=False
+    )
+    assert pos_tick2.elapsed_bars_m15 == 1
+
+    # Second closed bar: counter increments to 2
+    pos_bar2, _, _ = pm.evaluate_trailing_and_scaleout(
+        pos_tick2, tick, DEFAULT_INFO, now_mono=4.0, bar_closed=True
+    )
+    assert pos_bar2.elapsed_bars_m15 == 2
+    mock_bridge.close_partial_position.assert_not_called()
+
+
+def test_deterministic_time_invalidation_bar_7_false_bar_8_true() -> None:
+    """Verify deterministic fact: bar 7 is False (no invalidation) and bar 8 is True (liquidation)."""
+    # 1. Direct predicate assertion
+    assert PositionManager.is_time_invalidated(7) is False
+    assert PositionManager.is_time_invalidated(8) is True
+
+    # 2. End-to-end evaluation assertion
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        success=True,
+        closed_ticket=10001,
+        new_ticket=None,
+        closed_lot=0.04,
+        remaining_lot=0.0,
+        executed_price=2751.0,
+    )
+    pm = PositionManager(bridge=mock_bridge)
+    pos = _create_sample_buy_pos(current_lot=0.04).with_elapsed_bar(6)
+    assert pos.elapsed_bars_m15 == 6
+    tick = DummyTick(bid=2751.0, ask=2751.3)
+
+    # Bar 7: bar_closed=True -> 7 bars -> False (no liquidation)
+    pos_7, _, close_7 = pm.evaluate_trailing_and_scaleout(
+        pos, tick, DEFAULT_INFO, now_mono=10.0, bar_closed=True
+    )
+    assert pos_7.elapsed_bars_m15 == 7
+    assert close_7 is None
+    assert PositionManager.is_time_invalidated(pos_7.elapsed_bars_m15) is False
+    mock_bridge.close_partial_position.assert_not_called()
+
+    # Bar 8: bar_closed=True -> 8 bars -> True (liquidation triggered)
+    pos_8, _, close_8 = pm.evaluate_trailing_and_scaleout(
+        pos_7, tick, DEFAULT_INFO, now_mono=11.0, bar_closed=True
+    )
+    assert pos_8.elapsed_bars_m15 == 8
+    assert PositionManager.is_time_invalidated(pos_8.elapsed_bars_m15) is True
+    assert close_8 is not None and close_8.success is True
+    assert pos_8.current_lot == 0.0
+    mock_bridge.close_partial_position.assert_called_once_with(
+        ticket=10001,
+        position_identifier=9999,
+        symbol="XAUUSD",
+        direction="BUY",
+        close_lot=0.04,
+    )
+
+
+def test_position_manager_tracking_and_no_double_increment() -> None:
+    """Verify evaluate_bar_closed advances counter by exactly 1 without double increment."""
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    pm = PositionManager(bridge=mock_bridge)
+    pos = _create_sample_buy_pos(current_lot=0.04)
+    tick = DummyTick(bid=2751.0, ask=2751.3)
+
+    pm.track_position(pos)
+    assert len(pm.get_active_positions()) == 1
+
+    # First closed bar
+    results1 = pm.evaluate_bar_closed(tick, DEFAULT_INFO)
+    assert len(results1) == 1
+    new_pos1, _, _ = results1[0]
+    assert new_pos1.elapsed_bars_m15 == 1
+    assert pm.get_active_positions()[0].elapsed_bars_m15 == 1
+
+    # Second closed bar: exactly 1 increment (no double increment)
+    results2 = pm.evaluate_bar_closed(tick, DEFAULT_INFO)
+    assert len(results2) == 1
+    new_pos2, _, _ = results2[0]
+    assert new_pos2.elapsed_bars_m15 == 2
+    assert pm.get_active_positions()[0].elapsed_bars_m15 == 2
+
+    # Untrack position
+    untracked = pm.untrack_position(pos.ticket)
+    assert untracked is not None
+    assert len(pm.get_active_positions()) == 0

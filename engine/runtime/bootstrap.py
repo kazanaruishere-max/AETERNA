@@ -31,6 +31,8 @@ from engine.analysis_engine.python.interfaces import (
     StrategyEvaluator,
 )
 from engine.analysis_engine.python.types import CandleDict
+from engine.execution.broker_bridge import ExnessBrokerBridge
+from engine.execution.position_manager import PositionManager
 from engine.ingestion.python.exness_client import ExnessClient
 from engine.models.kronos.inference import KronosH4RegimeEngine
 from engine.runtime.dashboard import SignalOnlyDashboard
@@ -219,6 +221,8 @@ class RuntimeBundle:
     db_manager: DatabaseManager
     state_machine: NewsStateMachine
     news_filter: NewsCalendarFilter
+    position_manager: PositionManager | None = None
+    execution_enabled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -285,12 +289,18 @@ def build_runtime_bundle(
     strategy_evaluator: StrategyEvaluator | None = None,
     kronos_engine: KronosInferenceEngine | None = None,
     chart_candle_provider: Callable[[int], list[CandleDict]] | None = _DEFAULT_PROVIDER,
+    position_manager: PositionManager | None = None,
+    execution_enabled: bool = False,
 ) -> RuntimeBundle:
     """Compose and return the immutable signal-only RuntimeBundle.
 
     All dependencies are injected; tests can pass mocks for every component.
     No real order is ever sent; mode is strictly SIGNAL_ONLY.
     """
+    logger.info(
+        "POSITION_MANAGER_WIRING=%s",
+        "ENABLED" if execution_enabled else "DISABLED",
+    )
     news_filter = _build_news_filter(
         events=news_events,
         calendar_snapshot_path=calendar_snapshot_path,
@@ -335,6 +345,13 @@ def build_runtime_bundle(
     else:
         effective_candle_provider = chart_candle_provider
 
+    effective_position_manager: PositionManager
+    if position_manager is not None:
+        effective_position_manager = position_manager
+    else:
+        bridge = ExnessBrokerBridge(client=exness_client)
+        effective_position_manager = PositionManager(bridge=bridge)
+
     runtime = RuntimeService(
         loop_a=loop_a,
         loop_b=loop_b,
@@ -344,6 +361,8 @@ def build_runtime_bundle(
         symbol=symbol,
         publish_interval_seconds=publish_interval_seconds,
         chart_candle_provider=effective_candle_provider,
+        position_manager=effective_position_manager,
+        execution_enabled=execution_enabled,
     )
 
     return RuntimeBundle(
@@ -355,6 +374,8 @@ def build_runtime_bundle(
         db_manager=db_manager,
         state_machine=state_machine,
         news_filter=news_filter,
+        position_manager=effective_position_manager,
+        execution_enabled=execution_enabled,
     )
 
 

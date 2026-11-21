@@ -34,6 +34,8 @@ import pytest
 
 from engine.analysis_engine.python.indicators import MarketRegime
 from engine.analysis_engine.python.types import CandleDict, ModelInferenceResult
+from engine.execution.broker_bridge import ExnessBrokerBridge, PartialCloseResult
+from engine.execution.position_manager import PositionManager, PositionState
 from engine.models import CandleRecord, Timeframe
 from engine.runtime.bootstrap import (
     RuntimeBundle,
@@ -716,3 +718,206 @@ async def test_e2e_chart_provider_exception_falls_back_to_text(
         text = str(payload.get("text", "")).lower()
         for token in PROHIBITED_TOKENS:
             assert token not in text
+
+
+# ---------------------------------------------------------------------------
+# PositionManager M15 Closed Bar Wiring (TASK-RUNTIME-22)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_e2e_position_manager_default_disabled_no_bridge_call(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Default mode must keep execution_enabled=False, log DISABLED, and never call bridge."""
+    db_path = str(tmp_path / "trading_pm_disabled.db")
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot([])
+
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.client = exness
+    custom_pm = PositionManager(bridge=mock_bridge)
+    test_pos = PositionState(
+        ticket=1001,
+        position_identifier=9001,
+        symbol="XAUUSDm",
+        direction="BUY",
+        open_price=2000.0,
+        current_lot=0.02,
+        initial_sl=1990.0,
+        current_sl=1990.0,
+        tp=2020.0,
+        initial_r_pts=10.0,
+        spread_at_entry_usd=0.35,
+        elapsed_bars_m15=7,
+    )
+    custom_pm.track_position(test_pos)
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.bootstrap"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=db_path,
+            symbol="XAUUSDm",
+            position_manager=custom_pm,
+            # execution_enabled left at default False
+        )
+
+    assert bundle.execution_enabled is False
+    assert bundle.runtime.execution_enabled is False
+    assert "POSITION_MANAGER_WIRING=DISABLED" in caplog.text
+
+    # When evaluate_positions_once is called (even with bar_closed=True), disabled mode blocks execution
+    results = await bundle.runtime.evaluate_positions_once(bar_closed=True)
+    assert results == []
+    mock_bridge.modify_position_sltp.assert_not_called()
+    mock_bridge.close_partial_position.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_e2e_position_manager_enabled_wiring_m15_close_only(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When execution_enabled=True, evaluation occurs strictly on M15 close and liquidates at bar 8."""
+    db_path = str(tmp_path / "trading_pm_enabled.db")
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot([])
+
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.client = exness
+    mock_bridge.close_partial_position.return_value = PartialCloseResult(
+        success=True,
+        closed_ticket=1001,
+        new_ticket=None,
+        closed_lot=0.02,
+        remaining_lot=0.0,
+        executed_price=2000.0,
+    )
+
+    custom_pm = PositionManager(bridge=mock_bridge)
+    test_pos = PositionState(
+        ticket=1001,
+        position_identifier=9001,
+        symbol="XAUUSDm",
+        direction="BUY",
+        open_price=2000.0,
+        current_lot=0.02,
+        initial_sl=1990.0,
+        current_sl=1990.0,
+        tp=2020.0,
+        initial_r_pts=10.0,
+        spread_at_entry_usd=0.35,
+        elapsed_bars_m15=6,
+    )
+    custom_pm.track_position(test_pos)
+
+    with caplog.at_level(logging.INFO, logger="aeterna.runtime.bootstrap"):
+        bundle = build_runtime_bundle(
+            exness_client=exness,
+            control_bot=control_bot,
+            admin_chat_id=ADMIN_CHAT_ID,
+            db_path=db_path,
+            symbol="XAUUSDm",
+            position_manager=custom_pm,
+            execution_enabled=True,
+        )
+
+    assert bundle.execution_enabled is True
+    assert bundle.runtime.execution_enabled is True
+    assert "POSITION_MANAGER_WIRING=ENABLED" in caplog.text
+
+    # 1. Regular tick (bar_closed=False): must NOT evaluate or increment counter
+    res_tick = await bundle.runtime.evaluate_positions_once(bar_closed=False)
+    assert res_tick == []
+    active = custom_pm.get_active_positions()
+    assert len(active) == 1
+    assert active[0].elapsed_bars_m15 == 6
+    mock_bridge.close_partial_position.assert_not_called()
+
+    # 2. 7th bar closes (bar_closed=True): increments counter to 7, no liquidation
+    res_bar7 = await bundle.runtime.evaluate_positions_once(bar_closed=True)
+    assert len(res_bar7) == 1
+    pos_7, _, close_7 = res_bar7[0]
+    assert pos_7.elapsed_bars_m15 == 7
+    assert close_7 is None
+    assert PositionManager.is_time_invalidated(pos_7.elapsed_bars_m15) is False
+    mock_bridge.close_partial_position.assert_not_called()
+
+    # 3. 8th bar closes (bar_closed=True): increments to 8, triggers liquidation
+    res_bar8 = await bundle.runtime.evaluate_positions_once(bar_closed=True)
+    assert len(res_bar8) == 1
+    pos_8, _, close_8 = res_bar8[0]
+    assert pos_8.elapsed_bars_m15 == 8
+    assert PositionManager.is_time_invalidated(pos_8.elapsed_bars_m15) is True
+    assert close_8 is not None and close_8.success is True
+    assert pos_8.current_lot == 0.0
+    mock_bridge.close_partial_position.assert_called_once_with(
+        ticket=1001,
+        position_identifier=9001,
+        symbol="XAUUSDm",
+        direction="BUY",
+        close_lot=0.02,
+    )
+    # Position untracked post full close
+    assert len(custom_pm.get_active_positions()) == 0
+
+
+@pytest.mark.asyncio
+async def test_e2e_position_manager_m15_event_loop_a_integration(
+    tmp_path: Any,
+) -> None:
+    """Verify _run_position_manager wakes up when loop_a.m15_event is signaled."""
+    db_path = str(tmp_path / "trading_pm_event.db")
+    exness = _make_mock_exness(BAR_TS)
+    control_bot = _make_mock_control_bot([])
+
+    mock_bridge = MagicMock(spec=ExnessBrokerBridge)
+    mock_bridge.client = exness
+    custom_pm = PositionManager(bridge=mock_bridge)
+    test_pos = PositionState(
+        ticket=1001,
+        position_identifier=9001,
+        symbol="XAUUSDm",
+        direction="BUY",
+        open_price=2000.0,
+        current_lot=0.02,
+        initial_sl=1990.0,
+        current_sl=1990.0,
+        tp=2020.0,
+        initial_r_pts=10.0,
+        spread_at_entry_usd=0.35,
+        elapsed_bars_m15=0,
+    )
+    custom_pm.track_position(test_pos)
+
+    bundle = build_runtime_bundle(
+        exness_client=exness,
+        control_bot=control_bot,
+        admin_chat_id=ADMIN_CHAT_ID,
+        db_path=db_path,
+        symbol="XAUUSDm",
+        position_manager=custom_pm,
+        execution_enabled=True,
+    )
+
+    stop_event = asyncio.Event()
+    pm_task = asyncio.create_task(
+        bundle.runtime._run_position_manager(bundle.loop_a.m15_event, stop_event)
+    )
+
+    # Let task enter wait
+    await asyncio.sleep(0.05)
+    assert custom_pm.get_active_positions()[0].elapsed_bars_m15 == 0
+
+    # Signal M15 close from Loop A
+    bundle.loop_a.m15_event.set()
+    await asyncio.sleep(0.05)
+
+    # Position should have advanced by 1 bar
+    assert custom_pm.get_active_positions()[0].elapsed_bars_m15 == 1
+
+    # Cleanup
+    stop_event.set()
+    bundle.loop_a.m15_event.set()
+    await asyncio.wait_for(pm_task, timeout=2.0)
