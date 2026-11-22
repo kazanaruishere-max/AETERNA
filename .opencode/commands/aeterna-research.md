@@ -5,12 +5,15 @@
 ## Skills Injected
 {file:.opencode/skills/aeterna-invariants/SKILL.md}
 
+## Source Registry
+Baca `docs/aeterna/RESEARCH_SOURCES.md`. Untuk topik strategi trading, SSRN Blog Trading Strategies (`https://blog.ssrn.com/tag/trading-strategies/`) adalah index discovery; ikuti tautan ke paper SSRN/DOI/PDF asli sebelum klaim apa pun berstatus `EVIDENCE`.
+
 ## Inputs
 - `$ARGUMENTS`: pertanyaan riset (contoh: `mean-reversion M15 pada EURUSD sesi Asia`).
 
 ## Procedure
 1. Panggil sub-agent `aeterna-research`; pastikan ia tidak menulis di luar `.handoff/research/`.
-2. Kumpulkan sumber primer (arXiv/SSRN/DOI, BIS, Fed, dokumentasi broker). Blog, forum, dan konten afiliasi hanya boleh sebagai petunjuk awal, bukan bukti.
+2. Untuk strategi trading, kumpulkan kandidat dari SSRN Blog Trading Strategies, lalu buka paper SSRN/DOI/PDF asli. Sumber primer lain: arXiv/DOI, BIS, Fed, dokumentasi broker. Blog, forum, dan konten afiliasi hanya sebagai petunjuk awal, bukan bukti.
 3. Beri tag taksonomi pada setiap klaim: `EVIDENCE` | `HYPOTHESIS` | `CONTRADICTED` | `UNVERIFIED`.
 4. Wajibkan untuk setiap `EVIDENCE`: URL, tahun, tanggal akses, sampel, periode, horizon, dan status biaya transaksi.
 5. Turunkan ke `HYPOTHESIS` jika tranferabilitas ke M15–H1 retail belum jelas.

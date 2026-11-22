@@ -165,6 +165,8 @@ Setiap klaim eksternal (literatur, anomali pasar, aturan venue, angka kinerja) w
 
 Verdict dipisahkan dari tag: `ADOPT` | `TEST_FIRST` | `REJECT`, ditulis di akhir brief.
 
+Source hierarchy dan source registry wajib mengikuti `docs/aeterna/RESEARCH_SOURCES.md`. SSRN Blog Trading Strategies (`https://blog.ssrn.com/tag/trading-strategies/`) adalah **discovery-only index**, bukan jurnal dan bukan bukti. Setiap kandidat paper harus diikuti ke halaman SSRN/DOI/PDF asli sebelum klaim boleh berstatus `EVIDENCE`.
+
 Setiap item `EVIDENCE` wajib memuat: URL, terbitan, tahun, tanggal akses, aset, jumlah observasi, periode, horizon, dan status biaya transaksi. Bila transferabilitas ke horizon M15–H1 retail belum jelas, statusnya **turun** menjadi `HYPOTHESIS`.
 
 Brief disimpan di `.handoff/research/BRIEF-<slug>.md` dan wajib mengekspos `unverified_items` secara terbuka, bukan menyembunyikannya.
