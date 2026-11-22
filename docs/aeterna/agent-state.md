@@ -1,5 +1,5 @@
 ---
-state_version: 20
+state_version: 21
 updated_utc: "2026-11-21"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -9,11 +9,11 @@ audit_protocol: "AUDIT_BY_EXCEPTION"
 verification_protocol: "BUILDER_SELF_VERIFY_FIRST"
 active_task: null
 task_packet: null
-branch: "feat/p1-news-credential-wiring"
-authored_from_head: "3561b95"
+branch: "main"
+authored_from_head: "458fdba"
 base_ref: "main"
-base_commit: "3561b95"
-main_head: "3561b95"
+base_commit: "458fdba"
+main_head: "458fdba"
 allowed_paths: []
 gate_status:
   GATE-RUNTIME-LOOP-B: "PASSED"
@@ -28,8 +28,8 @@ gate_status:
   GATE-PROD-NEWS-SNAPSHOT: "SNAPSHOT_ACTIVE_WEB_ADAPTER"
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
-  GATE-PUBLIC-RELEASE: "PUBLISHED_CLEAN_TREE_PENDING_ROTATION"
-next_action: "Snapshot active via MQL5 web calendar adapter: 9 USD HIGH events, NEWS_SOURCE=MQL5_SNAPSHOT event_count=9 verified. Core focus: wait market open, run live P1 E2E (signal_observations + Telegram admin), then beta. Forward still after M5 + 50-100 samples."
+  GATE-PUBLIC-RELEASE: "BETA_RELEASE_OPENAETERNA_DEV_MAIN_AETERNA"
+next_action: "Development source of truth is GitHub AETERNA main at 458fdba. OpenAeterna is beta/public release only; do not push dev updates there. Core focus: wait market open, run live P1 E2E, then beta. Forward still after M5 + 50-100 samples."
 ---
 
 # AETERNA Agent State

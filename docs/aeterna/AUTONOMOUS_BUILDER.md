@@ -157,6 +157,8 @@ gh pr create --title "<type>(<scope>): <summary>" --body "<report-back>"
 
 Stop setelah PR. Merge hanya human operator.
 
+Development source of truth adalah repo GitHub `AETERNA`. `OpenAeterna` adalah release beta/publik dan bukan target push development harian. Jangan push update development ke `OpenAeterna` kecuali operator sedang mempublish rilis beta resmi.
+
 Jika CLI tidak memiliki `gh`, lapsi PR manual ke operator dan jangan push langsung ke `main`.
 
 ---
