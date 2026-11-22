@@ -1,6 +1,6 @@
-# OMP Task Packet Template v2 — AETERNA Quant Project (docs/aeterna/omp-task-template.md)
+# Autonomous Builder Task Packet Template v3 — AETERNA Quant Project (docs/aeterna/omp-task-template.md)
 
-Template resmi paket tugas mandiri (*self-contained task packet*) yang dihasilkan oleh `aeterna-lead` untuk dikerjakan oleh builder (OMP / `omp.exe`). Seluruh seksi di bawah ini WAJIB terisi lengkap sebelum task berstatus `READY`.
+Template resmi paket tugas mandiri (*self-contained task packet*) yang dihasilkan oleh `aeterna-lead` dan dapat dikerjakan oleh builder dari CLI mana pun: Claude Code, Codex CLI, OpenCode, Antigravity CLI, atau agen lain. Seluruh seksi di bawah ini WAJIB terisi lengkap sebelum task berstatus `READY`. Kontrak operasional: `docs/aeterna/AUTONOMOUS_BUILDER.md`.
 
 ---
 
@@ -16,12 +16,13 @@ metadata:
   covers_req: [REQ-<DOM>-<NUM>, REQ-<DOM>-<NUM>]
   depends_on: [TASK-M<X>-<Y>]
   base_commit: <hash_commit_terakhir>
+  builder_harness: any-cli
   status: READY | DRAFT | BLOCKED
 
 ---
 
 ## 1. Required Reading (Wajib Dibaca Sebelum Mulai)
-OMP wajib membaca file-file berikut secara berurutan untuk memahami konteks:
+Builder wajib membaca file-file berikut secara berurutan untuk memahami konteks:
 1. `docs/AGENTS.local.md` (Aturan operasional & batasan sistem)
 2. `docs/aeterna/invariant-cheatsheet.md` (Nilai numerik & konstanta absolut)
 3. `docs/aeterna/clean-code-rules.md` (Standar kode, linter, & refactoring)
@@ -77,7 +78,9 @@ Dilarang keras menyentuh file di luar daftar berikut:
 ---
 
 ## 8. Acceptance Commands & Expected Exit Code
-Perintah yang wajib dijalankan OMP dan harus menghasilkan return code 0:
+Perintah yang wajib dijalankan builder dan harus menghasilkan return code 0.
+
+Builder WAJIB menjalankan seluruh acceptance commands di bawah, lalu menempelkan `Verification Audit Report` dan raw output ke PR body / report-back. Jika CLI memiliki skill system, panggil skill verifikasi yang setara; jika tidak, baca `VERIFY.md` dan laporkan `fallback_docs_read`. Tanpa bukti ini, task tidak boleh dilaporkan selesai.
 ```powershell
 # 1. Jalankan unit test
 uv run pytest tests/<submodul>/test_<nama_file>.py -v
@@ -162,10 +165,13 @@ git clean -fd <file_baru_untracked>
 
 ---
 
-## 15. Report-Back Contract (Format Laporan OMP)
-OMP wajib melaporkan hasil kerja dalam format:
+## 15. Report-Back Contract (Format Laporan Builder)
+Builder wajib melaporkan hasil kerja dalam format:
 1. Daftar file yang diubah/dibuat.
-2. Log eksekusi perintah verifikasi seksi 8 (wajib teks asli tanpa rekayasa).
-3. Konfirmasi checklist clean code seksi 11.
-4. Kendala / deviasi teknis (jika ada).
+2. `context_manifest` + `skills_loaded` atau `fallback_docs_read`.
+3. `Verification Audit Report`.
+4. Log eksekusi perintah verifikasi seksi 8 (wajib teks asli tanpa rekayasa).
+5. Konfirmasi checklist clean code seksi 11.
+6. Side effects dan kendala/deviasi teknis (jika ada).
+7. Nomor PR atau alasan PR tidak dibuat.
 ```

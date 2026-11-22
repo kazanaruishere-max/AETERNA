@@ -1,0 +1,101 @@
+name: Public Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-release:
+    name: Verify and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Block forbidden tracked paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden='^(\.env$|\.env\..*|data/|logs/|\.handoff/|\.worktrees/|\.opencode/|ea/Reports/|ea/Config/.*\.ini$|.*\.secrets\.enc$|.*\.db$|.*\.db-wal$|.*\.db-shm$|.*\.log$|.*_KILLSWITCH\.lock$|.*_CIRCUIT_BREAKER\.lock$|^docs/AGENTS\.local\.md$|^docs/aeterna/agent-.*\.md$|^docs/aeterna/runbook-beta\.md$)'
+          if git ls-files | grep -E "$forbidden" | grep -v '^\.env\.example$'; then
+            echo "Forbidden tracked path found in release tree" >&2
+            exit 1
+          fi
+
+      - name: Block forbidden content patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nIE 'EXNESS-MT5Trial|TELEGRAM_[0-9]{6,}|[0-9]{3}-[0-9]{3}-[0-9]{7}-[0-9]{3}|b022[0-9a-f-]{20,}' -- ':!LICENSE' ':!CHANGELOG.md' ':!.github/workflows/release.yml'; then
+            echo "Forbidden content pattern found" >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install and verify Python
+        run: |
+          uv sync --frozen --all-groups
+          uv run maturin develop --locked --manifest-path engine/analysis_engine/rust/Cargo.toml
+          uv run pytest tests/ -q
+          uv run ruff check .
+          uv run pyright
+
+      - name: Verify Rust and Go
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+        run: |
+          export PYO3_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')"
+          cargo test --locked --manifest-path engine/analysis_engine/rust/Cargo.toml --all
+          cargo clippy --locked --manifest-path engine/analysis_engine/rust/Cargo.toml --all-targets --all-features -- -D warnings
+          cd engine/watchdog && go test ./... -count=1 && go vet ./...
+
+      - name: Create clean source archive
+        run: |
+          git archive --format=tar.gz --prefix="aeterna-${GITHUB_REF_NAME}/" -o "aeterna-${GITHUB_REF_NAME}-source.tar.gz" "$GITHUB_REF_NAME"
+
+      - name: Generate checksums
+        run: sha256sum aeterna-*-source.tar.gz > SHA256SUMS
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file CHANGELOG.md \
+            aeterna-*-source.tar.gz SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

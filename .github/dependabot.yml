@@ -1,9 +1,8 @@
 # Dependabot Configuration — AETERNA Quant Project
-# Mandate: Security-Only Lockdown & Minimal Disruption
-# - Version bumps are disabled (open-pull-requests-limit: 0 and ignore all semver updates)
-#   to preserve numerical determinism and locked dependencies.
-# - High-priority CVE security updates remain enabled via GitHub Repository Security Advisories.
-# - Zero Auto-Merge: All PRs subject to branch protection on main & Human Operator review.
+# Mandate: Security Patch Flow & Minimal Disruption
+# - Major/minor version bumps are ignored to preserve numerical determinism.
+# - Patch security updates are allowed via Dependabot PRs.
+# - Zero Auto-Merge: All PRs require branch protection and Human Operator review.
 
 version: 2
 updates:
@@ -14,13 +13,12 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 5
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-          - "version-update:semver-patch"
     labels:
       - "dependencies"
       - "security"
@@ -36,13 +34,12 @@ updates:
     directory: "/engine/analysis_engine/rust"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 5
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-          - "version-update:semver-patch"
     labels:
       - "dependencies"
       - "security"
@@ -58,13 +55,12 @@ updates:
     directory: "/engine/watchdog"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 5
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-          - "version-update:semver-patch"
     labels:
       - "dependencies"
       - "security"

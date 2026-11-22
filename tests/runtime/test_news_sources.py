@@ -254,12 +254,16 @@ def test_export_calendar_mql5_source_contract() -> None:
     MQL5 compilation. Asserts presence of TimeTradeServer(), TimeGMT(),
     source_timezone TRADE_SERVER, and server-GMT offset event conversion.
     """
-    mql5_path = Path(__file__).resolve().parents[2] / "ea" / "Scripts" / "ExportCalendar.mq5"
+    mql5_path = (
+        Path(__file__).resolve().parents[2] / "ea" / "Scripts" / "ExportCalendar.mq5"
+    )
     assert mql5_path.is_file(), f"MQL5 source file not found at {mql5_path}"
 
     source = mql5_path.read_text(encoding="utf-8")
 
-    assert "TimeTradeServer()" in source, "ExportCalendar.mq5 must call TimeTradeServer()"
+    assert "TimeTradeServer()" in source, (
+        "ExportCalendar.mq5 must call TimeTradeServer()"
+    )
     assert "TimeGMT()" in source, "ExportCalendar.mq5 must call TimeGMT()"
     assert "SOURCE_TIMEZONE" in source, "ExportCalendar.mq5 must define SOURCE_TIMEZONE"
     assert '"TRADE_SERVER"' in source, "ExportCalendar.mq5 must specify 'TRADE_SERVER'"
@@ -271,6 +275,12 @@ def test_export_calendar_mql5_source_contract() -> None:
     )
     assert "values[i].time - offset_seconds" in source, (
         "ExportCalendar.mq5 must adjust event timestamp by subtracting offset_seconds"
+    )
+    assert "ev.currency" not in source, (
+        "MqlCalendarEvent has no currency field; use filtered InpCurrency"
+    )
+    assert "InpCurrency" in source, (
+        "ExportCalendar.mq5 must use the filtered InpCurrency value"
     )
 
 
@@ -313,4 +323,3 @@ def test_golden_fixture_offset_plus_7_hours_jan_2026(
     assert loaded == [datetime(2026, 1, 1, 1, 30, tzinfo=UTC)]
     assert "NEWS_TIMEZONE_CONVERTED source_timezone=TRADE_SERVER" in caplog.text
     assert "NEWS_SOURCE=MQL5_SNAPSHOT" in caplog.text
-

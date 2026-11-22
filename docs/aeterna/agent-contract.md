@@ -13,17 +13,15 @@ Dokumen ini memuat kontrak kerja mutlak (*hard constraints*) bagi seluruh agen A
 2. Setiap respons final agen wajib diawali dengan blok metadata `context_manifest`. Agen wajib menyebutkan file dan bab/baris yang telah dibaca beserta alasannya.
 3. Jika dokumen yang dibutuhkan tidak ditemukan atau terjadi anomali, agen **dilarang berasumsi**. Agen wajib menyetel `status: BLOCKED` dan mencatat pertanyaan di `open_questions`.
 
-### 1.1 Automatic Skill Ingestion Gate
-1. Setiap sub-agent spesialis (`aeterna-*`) memiliki daftar skill wajib (*Mandatory Skills*) pada seksi `SKILL AUTO-LOAD MATRIX` di file konfigurasinya.
-2. Pada **Turn 1 aktivasi**, sebelum melakukan penalaran atau analisis, sub-agent **WAJIB memanggil tool `skill`** untuk menginjeksi keahlian wajibnya ke dalam konteks percakapan.
-3. Sub-agent wajib mendeteksi kondisi pemicu situasional (*Conditional Triggers*) untuk memuat skill on-demand:
-   - Menghadapi kegagalan test / exception / bug tersembunyi ──► Wajib memanggil `skill(name="diagnose")`.
-   - Mengaudit atau menulis kode yang menyentuh token/kredensial/keamanan ──► Wajib memanggil `skill(name="security-review")`.
-   - Menjalankan iterasi perbaikan / verifikasi multi-run ──► Wajib memanggil `skill(name="verification-loop")`.
-   - Merancang refactoring atau standardisasi kode ──► Wajib memanggil `skill(name="coding-standards")`.
-   - Merancang kontrak endpoint / API schema ──► Wajib memanggil `skill(name="api-design")`.
-   - Merancang skema database / IPC / storage patterns ──► Wajib memanggil `skill(name="backend-patterns")`.
-4. Output sub-agent yang tidak memuat deklarasi skill yang di-load di dalam `context_manifest` otomatis berstatus `BLOCKED`.
+### 1.1 Capability Ingestion Gate (CLI-Agnostic)
+1. Kontrak ini berlaku untuk builder dari CLI mana pun: Claude Code, Codex CLI, OpenCode, Antigravity CLI, atau agen lain yang dapat membaca file, menjalankan command, dan menulis kode.
+2. Jika CLI memiliki skill system, builder WAJIB memuat skill yang tersedia pada Turn 1 sesuai kebutuhan: verifikasi (`aeterna-verify`/`verification-loop`), debug (`diagnose`), keamanan (`security-review`), TDD (`tdd-workflow`), standar kode (`coding-standards`), API (`api-design`), atau database (`backend-patterns`).
+3. Jika CLI tidak memiliki skill system, builder WAJIB membaca file skill/doc setara sebagai teks biasa, minimal `docs/aeterna/clean-code-rules.md`, `VERIFY.md`, dan skill yang relevan di `.opencode/skills/`.
+4. Builder wajib melaporkan salah satu:
+   - `skills_loaded: [...]` bila skill dipanggil, atau
+   - `skills_loaded: []` + `fallback_docs_read: [...]` bila menggunakan doc fallback.
+5. Dilarang mengklaim memanggil skill yang tidak tersedia di CLI.
+6. Output builder yang tidak memuat deklarasi capability di `context_manifest` otomatis berstatus `BLOCKED`.
 
 ---
 
@@ -86,6 +84,14 @@ Kode yang dibangun oleh OMP dan diverifikasi oleh OpenCode wajib mematuhi metrik
    - `MERGE_READY`: Seluruh tes lokal lulus, CI hijau, scope patuh, dan golden test valid.
    - `CHANGES_REQUESTED`: Terdapat kegagalan pengujian, deviasi lint, atau pelanggaran scope.
 3. Tombol atau perintah merge **HANYA BOLEH DIJALANKAN SECARA MANUAL OLEH HUMAN OPERATOR**. Pelanggaran terhadap aturan ini berstatus P0 Violation (Security & Safety Breach).
+
+### 6.2 Verification Ladder
+
+1. **Builder Self-Verification**: builder wajib menjalankan seluruh acceptance commands, lint, typecheck, dan test; lalu menempelkan `Verification Audit Report` + raw output ke PR/report-back. Jika CLI memiliki skill, gunakan skill verifikasi yang setara; jika tidak, gunakan fallback doc `VERIFY.md` dan laporkan `fallback_docs_read`.
+2. **Lead Evidence Review**: Lead menerima self-verification jika lengkap dan konsisten. Lead tidak wajib otomatis memanggil verifier independen untuk task non-gate.
+3. **Independent Verifier by Exception**: verifier independen wajib dipanggil untuk Tier A/gate, perubahan risiko/keuangan/keamanan, kontradiksi, bukti tidak lengkap, gate transition, atau permintaan operator.
+4. Self-verification bukan independent audit dan tidak menghapus Two-Key Review pada modul Tier A.
+5. Human approval gate tetap tidak bisa digantikan oleh skill, builder, lead, atau verifier.
 
 ---
 

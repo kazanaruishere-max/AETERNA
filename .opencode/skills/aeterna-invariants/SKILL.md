@@ -1,7 +1,7 @@
 ---
 name: aeterna-invariants
 description: Operasional checklist konstanta absolut, batas risiko, rumus state machine, dan arsitektur ZERO LLM sistem AI Trading XAUUSD.
-license: Proprietary
+license: AGPL-3.0-only
 compatibility: opencode
 metadata:
   domain: quant-trading

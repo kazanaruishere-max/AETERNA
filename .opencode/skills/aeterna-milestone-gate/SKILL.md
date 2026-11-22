@@ -1,7 +1,7 @@
 ---
 name: aeterna-milestone-gate
 description: Panduan audit pemenuhan verification gates Milestone M1-M7, 3 audit manusia wajib, dan evaluasi project kill criteria.
-license: Proprietary
+license: AGPL-3.0-only
 compatibility: opencode
 metadata:
   workflow: quality-gate

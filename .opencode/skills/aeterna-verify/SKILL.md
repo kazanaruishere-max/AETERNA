@@ -1,7 +1,7 @@
 ---
 name: aeterna-verify
 description: Perintah verifikasi mekanis multi-stack (Python, Rust, Go), validasi golden test deterministik, dan audit clean code.
-license: Proprietary
+license: AGPL-3.0-only
 compatibility: opencode
 metadata:
   stack: [python, rust, go]

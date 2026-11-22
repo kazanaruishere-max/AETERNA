@@ -230,7 +230,7 @@ Versi eksperimen baru **HANYA BOLEH DIPERTIMBANGKAN MENGGANTIKAN BASELINE** jika
 Sebelum EA dipasang pada akun demo live yang berjalan 24 jam:
 
 - [ ] **Kompilasi Bersih**: Binary `.ex5` dihasilkan dengan 0 errors dan 0 warnings pada build MetaTrader 5 terbaru.
-- [ ] **Koneksi Akun Broker**: Terverifikasi terhubung ke server demo Exness Standard (`Exness-MT5Trial*`) dengan simbol `XAUUSDm`.
+- [ ] **Koneksi Akun Broker**: Terverifikasi terhubung ke server demo Exness Standard (`Exness-MT5<SERVER>`) dengan simbol `XAUUSDm`.
 - [ ] **Verifikasi Server-Side SL/TP**: Jalankan dry-run order pertama, buka tab *Trade* di MT5, pastikan kolom *S / L* dan *T / P* terisi angka fisik (bukan 0.000).
 - [ ] **State Machine Active**: Log terminal mencetak status `[STATE] Transitioned to NORMAL / PAUSED` saat terjadi anomali spread.
 - [ ] **Disaster Recovery Siap**: Operator telah menginstal aplikasi *Exness Trade Mobile App* di ponsel cerdas untuk intervensi darurat jika laptop mengalami gangguan daya atau internet.

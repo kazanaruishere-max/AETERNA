@@ -1,25 +1,35 @@
 ---
-state_version: 2
-updated_utc: "2026-11-19"
+state_version: 20
+updated_utc: "2026-11-21"
 project: "AETERNA Quant"
 phase: "P1 Journal"
 mode: "SIGNAL_ONLY"
 active_role: "aeterna-lead"
+audit_protocol: "AUDIT_BY_EXCEPTION"
+verification_protocol: "BUILDER_SELF_VERIFY_FIRST"
 active_task: null
 task_packet: null
-branch: "main"
-authored_from_head: "0e37da7"
+branch: "feat/p1-news-credential-wiring"
+authored_from_head: "3561b95"
 base_ref: "main"
-base_commit: "0e37da7"
-main_head: "0e37da7"
+base_commit: "3561b95"
+main_head: "3561b95"
 allowed_paths: []
 gate_status:
-  GATE-RUNTIME-LOOP-B: "CHANGES_REQUESTED"
-  GATE-RUNTIME-VIRTUAL-TRACKER: "PASS_PENDING_VERIFIER"
-  GATE-M4: "PENDING_HUMAN_AUDIT"
+  GATE-RUNTIME-LOOP-B: "PASSED"
+  GATE-RUNTIME-VIRTUAL-TRACKER: "PASSED"
+  GATE-NEWS-CALENDAR: "PASSED"
+  GATE-E2E-RUNTIME: "PASSED"
+  GATE-M4: "PASSED"
   GATE-M5: "PENDING_HUMAN_AUDIT"
   GATE-VIRTUAL-JOURNAL: "QUEUED"
-next_action: "Verifier audit merge 0e37da7; setelah PASS, buat task packet Loop B look-ahead fix."
+  GATE-P1-E2E-OBSERVER_WRITE: "CODE_PASS_LIVE_BLOCKED"
+  GATE-P1-E2E-PUBLISHER_ADMIN: "CODE_PASS_LIVE_BLOCKED"
+  GATE-PROD-NEWS-SNAPSHOT: "SNAPSHOT_ACTIVE_WEB_ADAPTER"
+  GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
+  GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
+  GATE-PUBLIC-RELEASE: "PUBLISHED_CLEAN_TREE_PENDING_ROTATION"
+next_action: "Snapshot active via MQL5 web calendar adapter: 9 USD HIGH events, NEWS_SOURCE=MQL5_SNAPSHOT event_count=9 verified. Core focus: wait market open, run live P1 E2E (signal_observations + Telegram admin), then beta. Forward still after M5 + 50-100 samples."
 ---
 
 # AETERNA Agent State
@@ -27,12 +37,12 @@ next_action: "Verifier audit merge 0e37da7; setelah PASS, buat task packet Loop 
 AETERNA Quant adalah platform riset dan eksekusi XAUUSD deterministik. Fase aktif P1 Journal, mode SIGNAL_ONLY, tanpa modal riil. LLM/AI CLI hanya developer tooling offline; produksi tidak boleh memakai LLM.
 
 ## 2. Read map
-- `engine/runtime/` -> Loop A/B, virtual tracker, dashboard, service
+- `engine/runtime/` -> Loop A/B, virtual tracker, dashboard, service, bootstrap, news loader, chart snapshot
 - `engine/state_machine/` -> news dan spread state
 - `engine/risk_gate/` -> sizing, drawdown, rollover
 - `engine/shared/db/` -> SQLite WAL repository
-- `instruments/xauusd/strategies/` -> logika strategi
-- `tests/runtime/` -> regression test runtime
+- `instruments/xauusd/strategies/` -> logika strategi dan adapter
+- `tests/e2e/` -> smoke test runtime end-to-end
 
 ## 3. Boot sequence
 1. Baca file ini.

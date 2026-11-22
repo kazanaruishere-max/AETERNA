@@ -64,14 +64,13 @@ void OnStart()
    {
       MqlCalendarEvent ev;
       if(!CalendarEventById(values[i].event_id, ev) || ev.importance != CALENDAR_IMPORTANCE_HIGH) continue;
-      if(StringCompare(InpCurrency, "", false) != 0 && StringCompare(ev.currency, InpCurrency, false) != 0) continue;
 
       datetime ts_utc = values[i].time - offset_seconds;
 
       if(count > 0) FileWriteString(h, ",\n");
       string entry = StringFormat(
          "    {\"id\": %s, \"event_id\": %s, \"name\": \"%s\", \"currency\": \"%s\", \"impact\": \"HIGH\", \"timestamp_utc\": \"%s\"}",
-         IntegerToString(values[i].id), IntegerToString(values[i].event_id), JsonEscape(ev.name), ev.currency, FormatIsoUtc(ts_utc)
+         IntegerToString(values[i].id), IntegerToString(values[i].event_id), JsonEscape(ev.name), InpCurrency, FormatIsoUtc(ts_utc)
       );
       FileWriteString(h, entry);
       count++;

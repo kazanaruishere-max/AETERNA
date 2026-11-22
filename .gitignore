@@ -61,3 +61,14 @@ dist/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Public release hygiene
+docs/aeterna/runbook-beta.md
+docs/AGENTS.local.md
+*_KILLSWITCH.lock
+*_CIRCUIT_BREAKER.lock
+*.sarif
+sarif-results/
+*.ini
+!ea/Config/.gitkeep
+*.ex5

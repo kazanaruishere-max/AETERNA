@@ -18,7 +18,7 @@ param (
 $ErrorActionPreference = "Stop"
 $repoRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
 $terminal = "C:\Program Files\OANDA Global MetaTrader 5 Terminal\terminal64.exe"
-$oandaData = "C:\Users\Lenovo\AppData\Roaming\MetaQuotes\Terminal\67E58C3BE56BAC51882B5F36F45E170E"
+$oandaData = Join-Path $env:APPDATA "MetaQuotes\Terminal\<TERMINAL_ID>"
 $reportsDir = Join-Path $repoRoot "ea\Reports"
 $configDir = Join-Path $repoRoot "ea\Config"
 

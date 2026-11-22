@@ -1,7 +1,7 @@
 ---
 name: aeterna-handoff
 description: Protokol pencatatan state sesi, status milestone gate, task aktif OMP, dan mitigasi risiko ke docs/aeterna/agent-state.md (tracked) dengan mirror lokal .handoff/latest.md.
-license: Proprietary
+license: AGPL-3.0-only
 compatibility: opencode
 metadata:
   workflow: handoff

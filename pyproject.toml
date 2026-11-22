@@ -1,6 +1,7 @@
 [project]
 name = "aeterna-quant"
 version = "0.1.0"
+license = { text = "AGPL-3.0-only" }
 description = "Deterministic Quantitative Trading Engine for XAUUSD"
 readme = "README.md"
 requires-python = ">=3.12"

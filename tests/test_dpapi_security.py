@@ -229,7 +229,7 @@ def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
     """Verify scripts/setup_secrets.py runs cleanly and writes encrypted payload."""
     test_out = tmp_path / ".secrets.enc"
 
-    inputs = iter(["11223344", "Exness-MT5Trial", "55667788", "@AeternaSignalsTest"])
+    inputs = iter(["11223344", "Demo-Server", "55667788", "@AeternaSignalsTest"])
     passwords = iter(["SuperSecureMT5Pass", "TelegramBotTokenSecret"])
 
     def mock_input(_prompt: str = "") -> str:
@@ -246,7 +246,7 @@ def test_setup_secrets_cli_execution(tmp_path: Path) -> None:
 
     loaded = load_encrypted_secrets(test_out)
     assert loaded["mt5_login"] == 11223344
-    assert loaded["mt5_server"] == "Exness-MT5Trial"
+    assert loaded["mt5_server"] == "Demo-Server"
     assert loaded["telegram_admin_id"] == 55667788
     assert isinstance(loaded["mt5_password"], SecretString)
     assert loaded["mt5_password"].get_secret_value() == "SuperSecureMT5Pass"

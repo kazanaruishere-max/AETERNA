@@ -43,6 +43,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `tests/` | Golden tests deterministik & suite pengujian otomatis | `aeterna-verifier` | OMP | A | `uv run pytest tests/ -v` |
 | `tests/test_emergency_handler.py` | Unit test deterministik untuk emergency handler, force close, lockfile, dan transisi state | `aeterna-verifier` | OMP | A | `uv run pytest tests/test_emergency_handler.py` |
 | `scripts/` | Skrip verifikasi ekosistem 5-pilar dan audit keamanan lokal (SCA) | `aeterna-security` | Lead / Verifier | A | `uv run python scripts/audit_security.py` |
+| `scripts/export_calendar_snapshot.py` | Export USD HIGH MQL5 calendar events via MQL5 web content endpoint | `aeterna-ingestion` | Lead | A | loader test + runtime `NEWS_SOURCE=MQL5_SNAPSHOT` |
 | `docs/` | Dokumentasi arsitektur, PRD, security, dan operasional | `aeterna-architect` | Lead / Manual | C | Doc review |
 | `docs/aeterna/ea-development-and-optimization-guide.md` | Panduan teknik resmi optimasi MQL5 EA & multi-agent workflow | `aeterna-lead` | Lead | A | Invariant compliance audit |
 | `docs/aeterna/ea-testing-and-certification-protocol.md` | Protokol sertifikasi institusional 6-tahap & kriteria live ready | `aeterna-backtest` | Lead | A | Institutional testing audit |
@@ -50,7 +51,7 @@ Matriks kepemilikan kode untuk memastikan setiap direktori dan file memiliki **t
 | `ea/AeternaEA/` | Native MQL5 Expert Advisor Engine (Golden Baseline v1.0, Tier A) | `aeterna-strategy` | Lead | A | `metaeditor64.exe` compile + MT5 Strategy Tester |
 | `ea/AeternaEA_v1_Baseline/` | Frozen immutable backup of verified v1.0 baseline (Disaster Recovery) | `aeterna-lead` | Lead | A | SHA256 checksum parity |
 | `ea/experiments/` | Workspace klon eksperimen MQL5 EA (ADR-009) | `aeterna-strategy` | Lead | A | Compile pass + Strategy Tester benchmark |
-| `ea/Scripts/` | PowerShell automation harness for headless batch strategy testing | `aeterna-verifier` | Lead | B | CLI batch execution pass |
+| `ea/Scripts/` | MQL5 utility scripts including economic calendar exporter | `aeterna-ingestion` | Lead | A | `metaeditor64.exe` compile + static source contract |
 | `ea/Reports/` | Historical backtest reports, charts, and metrics summaries | `aeterna-verifier` | Lead | C | Data audit verification |
 
 ---
