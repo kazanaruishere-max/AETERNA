@@ -1,5 +1,5 @@
 ---
-state_version: 21
+state_version: 22
 updated_utc: "2026-11-21"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -28,8 +28,8 @@ gate_status:
   GATE-PROD-NEWS-SNAPSHOT: "SNAPSHOT_ACTIVE_WEB_ADAPTER"
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
-  GATE-PUBLIC-RELEASE: "BETA_RELEASE_OPENAETERNA_DEV_MAIN_AETERNA"
-next_action: "Development source of truth is GitHub AETERNA main at 458fdba. OpenAeterna is beta/public release only; do not push dev updates there. Core focus: wait market open, run live P1 E2E, then beta. Forward still after M5 + 50-100 samples."
+  GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
+next_action: "Repository boundary: AETERNA is beta development source of truth; OpenAeterna is release/public artifact. Keep AETERNA README detailed; keep OpenAeterna README release-safe. Core focus: wait market open, run live P1 E2E, then beta."
 ---
 
 # AETERNA Agent State

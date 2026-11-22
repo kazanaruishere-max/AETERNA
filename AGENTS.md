@@ -6,10 +6,11 @@ Dokumen ini adalah pintu masuk netral untuk agent CLI apa pun.
 
 1. `docs/aeterna/agent-state.md`
 2. `docs/aeterna/invariant-cheatsheet.md`
-3. `docs/aeterna/AUTONOMOUS_BUILDER.md`
-4. `task_packet` yang ditunjuk oleh `agent-state.md`, jika `active_task` tidak null
+3. `docs/aeterna/REPO_BOUNDARY.md`
+4. `docs/aeterna/AUTONOMOUS_BUILDER.md`
+5. `task_packet` yang ditunjuk oleh `agent-state.md`, jika `active_task` tidak null
 
-Jangan membaca seluruh repo terlebih dahulu. Jangan mengarang konteks yang tidak ada di tiga sumber di atas. Baca `docs/aeterna/agent-audit-latest.md` hanya jika gate gagal atau task menyentuh known defect. Baca `docs/aeterna/agent-contract.md` hanya sebelum envelope final atau pekerjaan gate/security.
+Jangan membaca seluruh repo terlebih dahulu. Jangan mengarang konteks yang tidak ada di sumber-sumber di atas. Baca `docs/aeterna/agent-audit-latest.md` hanya jika gate gagal atau task menyentuh known defect. Baca `docs/aeterna/agent-contract.md` hanya sebelum envelope final atau pekerjaan gate/security.
 
 ## Aturan Kerja
 

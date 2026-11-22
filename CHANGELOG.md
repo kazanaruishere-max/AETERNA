@@ -2,7 +2,7 @@
 
 All notable changes are documented here. Format follows Keep a Changelog. Entries cite engineering gates and commits; no PnL, equity, tickets, or performance claims are included.
 
-This is the **AETERNA development changelog**. Public beta release notes are tracked separately in `docs/aeterna/BETA_CHANGELOG.md` and published through `OpenAeterna` only for official beta tags.
+This is the **AETERNA beta development changelog**. Public release notes are tracked separately in `docs/aeterna/BETA_CHANGELOG.md` and published through `OpenAeterna` only for official release tags.
 
 ## [Unreleased]
 
@@ -21,7 +21,8 @@ This is the **AETERNA development changelog**. Public beta release notes are tra
 - `.env.example` placeholders replace any live-looking values.
 - CodeQL Go uses an explicit watchdog build with Go installed before CodeQL init.
 - Dependabot allows patch security updates.
-- Development source of truth pinned to GitHub `AETERNA`; `OpenAeterna` is beta/public release only.
+- Repository boundary pinned: `AETERNA` is beta development source of truth; `OpenAeterna` is release/public artifact.
+- `README.md` and `README.id.md` restored as detailed beta development READMEs; `OpenAeterna` keeps a concise release-safe README.
 
 ### Security
 
@@ -56,4 +57,4 @@ This is the **AETERNA development changelog**. Public beta release notes are tra
 
 [Unreleased]: https://github.com/kazanaruishere-max/AETERNA/compare/3561b95...HEAD
 [0.1.0]: https://github.com/kazanaruishere-max/AETERNA/releases/tag/v0.1.0
-[OpenAeterna beta]: https://github.com/kazanaruishere-max/OpenAeterna/releases
+[OpenAeterna release]: https://github.com/kazanaruishere-max/OpenAeterna/releases

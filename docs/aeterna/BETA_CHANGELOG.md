@@ -1,12 +1,12 @@
 # AETERNA Beta Changelog
 
-This file records beta-facing updates for the public `OpenAeterna` release. Development continues in GitHub `AETERNA`; this file is the beta-facing mirror and must not include secrets, broker identifiers, equity, tickets, lot sizes, PnL, or performance claims.
+This file records beta development updates in GitHub `AETERNA` that are eligible to be mirrored into public `OpenAeterna` release notes. It must not include secrets, broker identifiers, equity, tickets, lot sizes, PnL, or performance claims.
 
 ## Release Model
 
-- Development source of truth: `github.com/kazanaruishere-max/AETERNA`
-- Beta/public artifact: `github.com/kazanaruishere-max/OpenAeterna`
-- Rule: normal development updates go to `AETERNA` only. `OpenAeterna` is updated only for official beta tags.
+- Beta development source of truth: `github.com/kazanaruishere-max/AETERNA`
+- Release/public artifact: `github.com/kazanaruishere-max/OpenAeterna`
+- Rule: daily development and beta evidence go to `AETERNA`. `OpenAeterna` is updated only for official release tags by the human operator.
 - Verification language: "verified" means deterministic tests, invariant checks, and engineering gates — never profitability.
 
 ## [beta/v0.1.0] - 2026-11-21

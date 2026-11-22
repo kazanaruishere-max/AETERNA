@@ -7,7 +7,8 @@ Before doing any work, read in this order:
 1. `AGENTS.md`
 2. `docs/aeterna/agent-state.md`
 3. `docs/aeterna/invariant-cheatsheet.md`
-4. `docs/aeterna/AUTONOMOUS_BUILDER.md`
+4. `docs/aeterna/REPO_BOUNDARY.md`
+5. `docs/aeterna/AUTONOMOUS_BUILDER.md`
 5. The task packet named in `agent-state.md`, if `active_task` is not null
 
 If `active_task` is null, do not write code. Perform read-only audit or stop.
