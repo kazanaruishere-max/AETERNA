@@ -2,6 +2,8 @@
 
 All notable changes are documented here. Format follows Keep a Changelog. Entries cite engineering gates and commits; no PnL, equity, tickets, or performance claims are included.
 
+This is the **AETERNA development changelog**. Public beta release notes are tracked separately in `docs/aeterna/BETA_CHANGELOG.md` and published through `OpenAeterna` only for official beta tags.
+
 ## [Unreleased]
 
 ### Added
@@ -9,14 +11,22 @@ All notable changes are documented here. Format follows Keep a Changelog. Entrie
 - Public-release documentation set: `SECURITY.md`, `DISCLAIMER.md`, `THIRD_PARTY_NOTICES.md`, `VERIFY.md`, verified track record, and public README files.
 - AGPL-3.0-only release licensing and `.gitattributes` export hygiene.
 - Public tag release workflow draft with forbidden-path checks and source archive generation.
+- Autonomous builder contract (`AUTONOMOUS_BUILDER.md`) and CLI-agnostic task packet template supporting Claude Code, Codex CLI, OpenCode, Antigravity CLI, and other agents.
+- `CLAUDE.md` entrypoint and skill fallback policy for non-OpenCode builders.
+- `scripts/export_calendar_snapshot.py` using MQL5 web calendar content endpoint.
+- Beta changelog at `docs/aeterna/BETA_CHANGELOG.md`.
 
 ### Changed
 
 - `.env.example` placeholders replace any live-looking values.
+- CodeQL Go uses an explicit watchdog build with Go installed before CodeQL init.
+- Dependabot allows patch security updates.
+- Development source of truth pinned to GitHub `AETERNA`; `OpenAeterna` is beta/public release only.
 
 ### Security
 
 - Release process now blocks secrets, runtime databases, logs, broker reports, and internal handoff artifacts from source archives.
+- Skill frontmatter license changed from `Proprietary` to `AGPL-3.0-only` for public release consistency.
 
 ## [0.1.0] - 2026-11-21
 
@@ -44,5 +54,6 @@ All notable changes are documented here. Format follows Keep a Changelog. Entrie
 - 27 news tests passing after exporter source fix.
 - Go watchdog, Ruff, Pyright, and `git diff --check` clean.
 
-[Unreleased]: https://github.com/<OWNER>/<REPO>/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/<OWNER>/<REPO>/releases/tag/v0.1.0
+[Unreleased]: https://github.com/kazanaruishere-max/AETERNA/compare/3561b95...HEAD
+[0.1.0]: https://github.com/kazanaruishere-max/AETERNA/releases/tag/v0.1.0
+[OpenAeterna beta]: https://github.com/kazanaruishere-max/OpenAeterna/releases
