@@ -36,6 +36,9 @@ BlockedReason = Literal[
     "stale_signal_expired",
 ]
 ModelStatus = Literal["candidate", "active", "archived", "rejected"]
+ReplayStatus = Literal["PENDING", "RUNNING", "COMPLETED", "BLOCKED", "INTERRUPTED"]
+ReplayMode = Literal["STRATEGY_ONLY", "NEWS_BLOCK_ONLY"]
+RecordOrigin = Literal["LIVE", "REPLAY"]
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,8 @@ class BlockedSignalRecord:
     current_spread: float
     details: str | None = None
     id: int | None = None
+    origin: RecordOrigin = "LIVE"
+    replay_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,7 @@ class BarCursorRecord:
     timeframe: Timeframe
     last_closed_bar_ts: int
     updated_at_ms: int
+    config_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +161,8 @@ class SignalObservationRecord:
     partial_skipped_min_lot: int = 0
     r_realized_net: float = 0.0
     exit_reason: str | None = None
+    origin: RecordOrigin = "LIVE"
+    replay_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,3 +180,26 @@ class NewsTelemetryRecord:
     range_5m: float | None = None
     range_15m: float | None = None
     range_60m: float | None = None
+
+
+@dataclass(frozen=True)
+class ReplayRunRecord:
+    """Audit trail record for restart gap replay execution runs."""
+
+    replay_id: str
+    symbol: str
+    timeframe: Timeframe
+    last_cursor_ts: int
+    first_missed_bar_ts: int
+    last_missed_bar_ts: int
+    missed_count: int
+    started_at_utc: str
+    status: ReplayStatus
+    replay_mode: ReplayMode
+    config_hash: str
+    strategy_id: str
+    model_id: str
+    finished_at_utc: str | None = None
+    observations_created: int = 0
+    blocked_created: int = 0
+    error_text: str | None = None
