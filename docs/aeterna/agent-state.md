@@ -1,6 +1,6 @@
 ---
-state_version: 22
-updated_utc: "2026-11-21"
+state_version: 26
+updated_utc: "2026-11-23"
 project: "AETERNA Quant"
 phase: "P1 Journal"
 mode: "SIGNAL_ONLY"
@@ -10,10 +10,10 @@ verification_protocol: "BUILDER_SELF_VERIFY_FIRST"
 active_task: null
 task_packet: null
 branch: "main"
-authored_from_head: "458fdba"
+authored_from_head: "a6acf3b"
 base_ref: "main"
-base_commit: "458fdba"
-main_head: "458fdba"
+base_commit: "a6acf3b"
+main_head: "a6acf3b"
 allowed_paths: []
 gate_status:
   GATE-RUNTIME-LOOP-B: "PASSED"
@@ -29,7 +29,7 @@ gate_status:
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
   GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
-next_action: "Repository boundary: AETERNA is beta development source of truth; OpenAeterna is release/public artifact. Keep AETERNA README detailed; keep OpenAeterna README release-safe. Core focus: wait market open, run live P1 E2E, then beta."
+next_action: "XAUUSD focus locked. Weekday: testing/fix/polish + live P1 E2E. Weekend: PLAN-07 contract spec and PLAN-08 restart-gap replay design docs only. Plan register: .handoff/plans/PLAN-REGISTER-2026-11-22.md. No runtime adapter, replay implementation, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
 ---
 
 # AETERNA Agent State
@@ -72,3 +72,14 @@ AETERNA Quant adalah platform riset dan eksekusi XAUUSD deterministik. Fase akti
 - `docs/aeterna/agent-audit-latest.md` -> hanya jika gate gagal atau task menyentuh known defect.
 - `docs/aeterna/agent-contract.md` -> hanya sebelum envelope final atau pekerjaan gate/security.
 - `docs/AGENTS.local.md` -> kebijakan operator lokal; baca jika ada potensi konflik kebijakan.
+
+## 7. Plans (2026-11-22)
+- PLAN-01 PSAR EA: DEFERRED_CANDIDATE | `.handoff/plans/PLAN-01-PSAR-SCALPING.md`
+- PLAN-02 Monthly maintenance: ACCEPTED_WITH_GUARD | `.handoff/plans/PLAN-02-MONTHLY-MAINTENANCE.md`
+- PLAN-03 Kubernetes/Docker: REJECTED_FOR_NOW | `.handoff/plans/PLAN-03-KUBERNETES-DOCKER.md`
+- PLAN-04 Weekly news JSON: ACCEPTED_AS_ARCHIVE_ONLY | `.handoff/plans/PLAN-04-WEEKLY-NEWS-SNAPSHOT.md`
+- PLAN-05 Floating/spike/leverage/margin: ACCEPTED_PHASED_DEFENSE | `.handoff/plans/PLAN-05-MARGIN-SPIKE-DEFENSE.md`
+- PLAN-06 User forward-test telemetry: CONDITIONAL_INTERNAL_ONLY | `.handoff/plans/PLAN-06-USER-FORWARD-TELEMETRY.md`
+- PLAN-07 Instrument adapter workflow: ACCEPTED_AS_WORKFLOW_ONLY | contract-first + XAUUSD focus | `.handoff/plans/PLAN-07-INSTRUMENT-ADAPTER-WORKFLOW.md`
+- PLAN-08 Restart gap replay: PROPOSED_NOT_APPROVED | design + contract PR first | `.handoff/plans/PLAN-08-RESTART-GAP-REPLAY.md`
+- Register: `.handoff/plans/PLAN-REGISTER-2026-11-22.md`; full ledger: `.handoff/2026-11-22.md` / `.handoff/latest.md`.

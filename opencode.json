@@ -13,6 +13,7 @@
     "skill": {
       "*": "deny",
       "aeterna-*": "allow",
+      "aeterna-task-protocol": "allow",
       "omp-task-protocol": "allow",
       "handoff": "allow",
       "security-review": "allow",
@@ -33,7 +34,7 @@
       "subtask": true
     },
     "aeterna-task": {
-      "description": "Generate self-contained OMP task packet in .handoff/tasks/",
+      "description": "Generate self-contained harness-neutral builder task packet in .handoff/tasks/",
       "template": "{file:.opencode/commands/aeterna-task.md}\n\n$ARGUMENTS",
       "agent": "aeterna-lead",
       "subtask": true

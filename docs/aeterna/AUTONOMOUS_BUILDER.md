@@ -12,11 +12,47 @@ Root `AGENTS.md` adalah entrypoint netral. File ini adalah detail operasionalnya
 | :--- | :--- | :--- |
 | Claude Code | `CLAUDE.md` → `AGENTS.md` | Jika `CLAUDE.md` tersedia, gunakan sebagai pointer. |
 | Codex CLI | `AGENTS.md` | Ikuti kontrak root. |
-| OpenCode | `AGENTS.md` + `opencode.json` | Skill `aeterna-*` tersedia bila diizinkan. |
+| DeepSeek harness | `AGENTS.md` | Ikuti kontrak root; gunakan fallback bila skill system tidak ada. |
+| OpenCode | `AGENTS.md` + `opencode.json` | Skill `aeterna-*` tersedia bila diizinkan; `aeterna-task-protocol` kanonik. |
 | Antigravity CLI | `AGENTS.md` | Perlakukan sebagai kontrak utama. |
 | Lainnya | `AGENTS.md` | Jika tidak bisa membaca file atau menjalankan command, `BLOCKED`. |
 
 CLI tidak mengubah aturan kualitas. Tool boleh berbeda; bukti, scope, dan gate tetap sama.
+
+### 1.1 Universal Skill Binding
+
+Protokol kanonik untuk authoring dan evaluasi task packet adalah `aeterna-task-protocol` (`.opencode/skills/aeterna-task-protocol/SKILL.md`). Skill lama `omp-task-protocol` adalah alias deprecated, bukan pembatas harness.
+
+Setiap harness wajib:
+
+| Kebutuhan | Skill kanonik | Fallback bila skill system tidak tersedia |
+| :--- | :--- | :--- |
+| Task packet | `aeterna-task-protocol` | `.opencode/skills/aeterna-task-protocol/SKILL.md` + `docs/aeterna/task-packet-template.md` |
+| Invariant | `aeterna-invariants` | `.opencode/skills/aeterna-invariants/SKILL.md` + `docs/aeterna/invariant-cheatsheet.md` |
+| Gate | `aeterna-milestone-gate` | `.opencode/skills/aeterna-milestone-gate/SKILL.md` |
+| Verifikasi | `aeterna-verify` | `VERIFY.md` + `docs/aeterna/clean-code-rules.md` |
+| Handoff | `aeterna-handoff` | `.opencode/skills/aeterna-handoff/SKILL.md` |
+
+Wajib melaporkan salah satu:
+
+```yaml
+skills_loaded: ["aeterna-task-protocol", "aeterna-invariants"]
+fallback_docs_read: []
+builder_harness: claude-code | codex-cli | deepseek-harness | antigravity-cli | opencode | generic
+```
+
+Atau:
+
+```yaml
+skills_loaded: []
+fallback_docs_read:
+  - ".opencode/skills/aeterna-task-protocol/SKILL.md"
+  - "docs/aeterna/AUTONOMOUS_BUILDER.md"
+  - "VERIFY.md"
+builder_harness: <harness>
+```
+
+Dilarang mengklaim skill yang tidak tersedia. Output tanpa deklarasi ini berstatus `BLOCKED`.
 
 ---
 
@@ -57,6 +93,10 @@ Gunakan skill yang tersedia:
 
 | Kebutuhan | Skill |
 | :--- | :--- |
+| Task packet | `aeterna-task-protocol` |
+| Invariant | `aeterna-invariants` |
+| Gate / phase | `aeterna-milestone-gate` |
+| Handoff | `aeterna-handoff` |
 | Verifikasi | `aeterna-verify` / `verification-loop` |
 | Bug sulit | `diagnose` |
 | Keamanan/secret | `security-review` |
@@ -69,9 +109,12 @@ Gunakan skill yang tersedia:
 
 Baca file skill/doc setara sebagai teks biasa:
 
-- `.opencode/skills/aeterna-verify/SKILL.md`
+- `.opencode/skills/aeterna-task-protocol/SKILL.md`
 - `.opencode/skills/aeterna-invariants/SKILL.md`
-- `.opencode/skills/omp-task-protocol/SKILL.md`
+- `.opencode/skills/aeterna-milestone-gate/SKILL.md`
+- `.opencode/skills/aeterna-verify/SKILL.md`
+- `.opencode/skills/aeterna-handoff/SKILL.md`
+- `docs/aeterna/task-packet-template.md`
 - `docs/aeterna/clean-code-rules.md`
 - `VERIFY.md`
 

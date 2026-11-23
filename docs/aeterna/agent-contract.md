@@ -13,15 +13,32 @@ Dokumen ini memuat kontrak kerja mutlak (*hard constraints*) bagi seluruh agen A
 2. Setiap respons final agen wajib diawali dengan blok metadata `context_manifest`. Agen wajib menyebutkan file dan bab/baris yang telah dibaca beserta alasannya.
 3. Jika dokumen yang dibutuhkan tidak ditemukan atau terjadi anomali, agen **dilarang berasumsi**. Agen wajib menyetel `status: BLOCKED` dan mencatat pertanyaan di `open_questions`.
 
-### 1.1 Capability Ingestion Gate (CLI-Agnostic)
-1. Kontrak ini berlaku untuk builder dari CLI mana pun: Claude Code, Codex CLI, OpenCode, Antigravity CLI, atau agen lain yang dapat membaca file, menjalankan command, dan menulis kode.
-2. Jika CLI memiliki skill system, builder WAJIB memuat skill yang tersedia pada Turn 1 sesuai kebutuhan: verifikasi (`aeterna-verify`/`verification-loop`), debug (`diagnose`), keamanan (`security-review`), TDD (`tdd-workflow`), standar kode (`coding-standards`), API (`api-design`), atau database (`backend-patterns`).
-3. Jika CLI tidak memiliki skill system, builder WAJIB membaca file skill/doc setara sebagai teks biasa, minimal `docs/aeterna/clean-code-rules.md`, `VERIFY.md`, dan skill yang relevan di `.opencode/skills/`.
-4. Builder wajib melaporkan salah satu:
-   - `skills_loaded: [...]` bila skill dipanggil, atau
-   - `skills_loaded: []` + `fallback_docs_read: [...]` bila menggunakan doc fallback.
-5. Dilarang mengklaim memanggil skill yang tidak tersedia di CLI.
-6. Output builder yang tidak memuat deklarasi capability di `context_manifest` otomatis berstatus `BLOCKED`.
+### 1.1 Universal Capability & Skill Binding (Harness-Agnostic)
+1. Kontrak ini berlaku untuk agentic AI mana pun: Claude Code, Codex CLI, DeepSeek harness, Antigravity CLI, OpenCode, atau harness lain yang dapat membaca file, menjalankan command, dan menulis kode.
+2. Protokol task kanonik adalah `aeterna-task-protocol`. `omp-task-protocol` adalah alias deprecated untuk konfigurasi lama dan tidak membatasi builder ke OMP.
+3. Jika harness memiliki skill system, builder WAJIB memuat skill yang tersedia pada Turn 1 sesuai kebutuhan:
+   - task packet: `aeterna-task-protocol`;
+   - invariant: `aeterna-invariants`;
+   - gate / phase: `aeterna-milestone-gate`;
+   - verifikasi: `aeterna-verify` / `verification-loop`;
+   - handoff: `aeterna-handoff`;
+   - pendukung: `diagnose`, `security-review`, `tdd-workflow`, `coding-standards`, `api-design`, `backend-patterns`.
+4. Jika harness tidak memiliki skill system, builder WAJIB membaca file skill/doc setara sebagai teks biasa, minimal:
+   - `.opencode/skills/aeterna-task-protocol/SKILL.md`
+   - `.opencode/skills/aeterna-invariants/SKILL.md`
+   - `docs/aeterna/AUTONOMOUS_BUILDER.md`
+   - `docs/aeterna/task-packet-template.md`
+   - `docs/aeterna/clean-code-rules.md`
+   - `VERIFY.md`
+5. Builder wajib melaporkan:
+   ```yaml
+   skills_loaded: [...]
+   fallback_docs_read: [...]
+   builder_harness: claude-code | codex-cli | deepseek-harness | antigravity-cli | opencode | generic
+   ```
+6. Dilarang mengklaim memanggil skill yang tidak tersedia di harness.
+7. Output builder yang tidak memuat deklarasi capability di `context_manifest` otomatis berstatus `BLOCKED`.
+8. Nama harness tidak mengubah bukti, scope, invariant, atau gate.
 
 ---
 
@@ -61,7 +78,7 @@ Dokumen ini memuat kontrak kerja mutlak (*hard constraints*) bagi seluruh agen A
 
 ## 5. Clean Code Gate & Batasan Numerik Keras
 
-Kode yang dibangun oleh OMP dan diverifikasi oleh OpenCode wajib mematuhi metrik berikut:
+Kode yang dibangun oleh builder harness mana pun dan diverifikasi oleh verifier yang ditunjuk wajib mematuhi metrik berikut:
 - **Panjang Fungsi**: Maksimal 50 baris per fungsi.
 - **Panjang File**: Tipikal 200–400 baris, maksimal 800 baris.
 - **Nesting Level**: Maksimal 4 tingkat indentasi.
@@ -79,7 +96,7 @@ Kode yang dibangun oleh OMP dan diverifikasi oleh OpenCode wajib mematuhi metrik
 4. **Side-Effect Ban**: Dilarang mengubah kontrak publik API, skema database, struktur konfigurasi YAML, format log, atau jalur jaringan di luar cakupan task. Setiap potensi efek samping wajib dideklarasikan tertulis pada task packet.
 
 ### 6.1 Larangan Mutlak Otomasi Merge (`gh pr merge` Ban)
-1. Perintah `gh pr merge`, `git merge`, atau auto-merge API **DILARANG KERAS** dipanggil oleh agent mana pun (OpenCode, OMP, maupun sub-agent `aeterna-*` mana pun) tanpa pengecualian.
+1. Perintah `gh pr merge`, `git merge`, atau auto-merge API **DILARANG KERAS** dipanggil oleh agent atau builder harness mana pun tanpa pengecualian.
 2. Peran `aeterna-verifier` dibatasi HANYA untuk menerbitkan rekomendasi status:
    - `MERGE_READY`: Seluruh tes lokal lulus, CI hijau, scope patuh, dan golden test valid.
    - `CHANGES_REQUESTED`: Terdapat kegagalan pengujian, deviasi lint, atau pelanggaran scope.

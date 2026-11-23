@@ -3,24 +3,24 @@
 2. Requirement terkait telah terdaftar di `docs/aeterna/requirements.md`.
 
 ## Skills Injected
-{file:.opencode/skills/omp-task-protocol/SKILL.md}
+{file:.opencode/skills/aeterna-task-protocol/SKILL.md}
 {file:.opencode/skills/aeterna-invariants/SKILL.md}
 
 ## Inputs
-- `$ARGUMENTS`: ID atau nama rancangan modul yang hendak diubah menjadi task packet OMP (contoh: `TASK-M1-01 SQLite Schema`).
+- `$ARGUMENTS`: ID atau nama rancangan modul yang hendak diubah menjadi task packet builder-agnostic (contoh: `TASK-M1-01 SQLite Schema`).
 
 ## Procedure
-1. Lead menyusun task packet sendiri. Pastikan skill `omp-task-protocol` dan `aeterna-invariants` dimuat aktif.
-2. Muat template `docs/aeterna/omp-task-template.md`.
+1. Lead menyusun task packet sendiri. Pastikan skill `aeterna-task-protocol` dan `aeterna-invariants` dimuat aktif. Jika skill system tidak tersedia, baca kedua file SKILL.md sebagai fallback dan laporkan `fallback_docs_read`.
+2. Muat template kanonik `docs/aeterna/task-packet-template.md` (alias lama: `docs/aeterna/omp-task-template.md`).
 3. Tentukan file yang di-whitelist pada seksi `Scope` (maksimal 3 file) dan tetapkan batasan `Forbidden Scope`.
 4. Rincikan persyaratan implementasi yang bertestable, RTM task, dan invariants numerik.
 5. Susun perintah Acceptance Commands otomatis (`uv run pytest`, `cargo test`, `go test`, linter).
 6. Deklarasikan ketiadaan efek samping (*side-effects*) dan tetapkan diff budget.
 7. Tulis file task packet ke `.handoff/tasks/TASK-M<X>-<YY>.md`.
-8. Tampilkan perintah terminal untuk dieksekusi oleh operator via OMP.
+8. Tampilkan perintah terminal untuk dieksekusi oleh operator via builder harness pilihan (Claude Code, Codex CLI, DeepSeek harness, Antigravity CLI, OpenCode, atau lain yang patuh `AGENTS.md`).
 
 ## Output
-File paket tugas mandiri `.handoff/tasks/TASK-M<X>-<YY>.md` berstatus `READY` dan instruksi pemanggilan OMP.
+File paket tugas mandiri `.handoff/tasks/TASK-M<X>-<YY>.md` berstatus `READY` dan instruksi eksekusi builder-agnostic.
 
 ## Abort conditions
 - Modul belum memiliki acceptance criteria atau test case yang dapat diuji mekanis.

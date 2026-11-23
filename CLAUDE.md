@@ -13,6 +13,6 @@ Before doing any work, read in this order:
 
 If `active_task` is null, do not write code. Perform read-only audit or stop.
 
-For builder tasks, follow `docs/aeterna/AUTONOMOUS_BUILDER.md`. Use available skills when supported; otherwise read the fallback docs and report `fallback_docs_read`.
+For builder tasks, follow `docs/aeterna/AUTONOMOUS_BUILDER.md` and the canonical `aeterna-task-protocol`. If the skill system is supported, load the available AETERNA skills; otherwise read the fallback docs and report `fallback_docs_read` plus `builder_harness: claude-code`.
 
 Hard rules: respect `allowed_paths`, run all acceptance commands, attach raw output, never call `gh pr merge`, never write secrets, never stop 9router on port 20128, and stop after creating the PR.

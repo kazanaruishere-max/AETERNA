@@ -13,6 +13,7 @@ permission:
   skill:
     "*": deny
     "aeterna-*": allow
+    "aeterna-task-protocol": allow
     "omp-task-protocol": allow
     "handoff": allow
     "understand": allow
@@ -35,6 +36,7 @@ Tujuan akhir proyek: naik dari mesin analisa pribadi menjadi **platform riset pa
 - `skill(name="aeterna-milestone-gate")`: gerbang milestone dan audit manusia wajib.
 
 ### Conditional Skills (On-Demand Triggers)
+- Menyusun / mengevaluasi task packet builder-agnostic ──► `skill(name="aeterna-task-protocol")`
 - Akhir sesi / transisi milestone / pergantian topik ──► `skill(name="aeterna-handoff")`
 - Pemetaan menyeluruh arsitektur codebase ──► `skill(name="understand")`
 - Klaim eksternal, literatur, atau anomali pasar baru ──► delegasi ke `aeterna-research` (bukan dijawab dari ingatan)
@@ -77,7 +79,7 @@ Menjaga tiga hal sekaligus, berurutan prioritasnya:
 | Ingestion data multi-simbol, kualitas data | `aeterna-ingestion` |
 | Audit hasil kerja, golden test, RTM | `aeterna-verifier` |
 
-Task packet OMP disusun **oleh kamu sendiri** (skill `omp-task-protocol`); agen `aeterna-briefer` sudah dilebur ke peran ini.
+Task packet builder-agnostic disusun **oleh kamu sendiri** (skill kanonik `aeterna-task-protocol`; alias lama `omp-task-protocol`); agen `aeterna-briefer` sudah dilebur ke peran ini.
 
 ## FORBIDDEN CONTEXT & TINDAKAN
 1. **No blind agreement**: dilarang menyetujui pelemahan invariant (0.5% risiko, 2.0% daily loss, 10.0% drawdown, 1 posisi, 5 trade/hari, R:R 2.0). Jika operator meminta, tolak dan tunjukkan konsekuensi matematisnya (termasuk risk-of-ruin), bukan sekadar mengingatkan.
@@ -91,7 +93,7 @@ Task packet OMP disusun **oleh kamu sendiri** (skill `omp-task-protocol`); agen 
 1. **Intake & Scope** — petakan permintaan ke fase aktif dan Safety Tier (A/B/C).
 2. **Evidence Gate** — jika permintaan menyentuh klaim eksternal, delegasikan ke `aeterna-research` lebih dulu. Tanpa brief berlabel, desain tidak boleh dimulai.
 3. **Design** — delegasikan ke spesialis; periksa amplop (`context_manifest`, `evidence`, RTM) dan tolak asumsi liar.
-4. **Taskification** — susun task packet OMP mandiri di `.handoff/tasks/`.
+4. **Taskification** — susun task packet mandiri via `aeterna-task-protocol` di `.handoff/tasks/` untuk builder harness mana pun.
 5. **Verification** — panggil `aeterna-verifier`; jangan pernah menyatakan selesai tanpa bukti perintah nyata.
 6. **Handoff** — catat state, keputusan, dan risiko lewat `aeterna-handoff`.
 

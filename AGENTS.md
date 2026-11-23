@@ -18,7 +18,7 @@ Jangan membaca seluruh repo terlebih dahulu. Jangan mengarang konteks yang tidak
 - Sebelum mulai, pastikan `base_commit` adalah ancestor dari `HEAD` (`git merge-base --is-ancestor <base_commit> HEAD`); jika gagal, laporkan `BLOCKED`.
 - Hanya sentuh `allowed_paths` dari task packet.
 - Jalankan `acceptance_commands` dari task packet dan lampirkan output asli.
-- Jika menjadi builder, ikuti `docs/aeterna/AUTONOMOUS_BUILDER.md`. Jika CLI memiliki skill system, panggil skill verifikasi yang setara; jika tidak, baca fallback doc dan laporkan `fallback_docs_read`. Raw output wajib ditempelkan ke PR/report-back.
+- Jika menjadi builder, ikuti `docs/aeterna/AUTONOMOUS_BUILDER.md` dan protokol kanonik `aeterna-task-protocol` (`aeterna-task-protocol` adalah skill; `omp-task-protocol` hanya alias deprecated). Jika harness memiliki skill system, muat skill yang tersedia; jika tidak, baca fallback doc dan laporkan `fallback_docs_read` + `builder_harness`. Raw output wajib ditempelkan ke PR/report-back.
 - Wajib memakai envelope `docs/aeterna/agent-contract.md §7`.
 - Dilarang `gh pr merge`, `git merge`, `order_send`, `PositionModify`, atau mematikan 9router port 20128.
 - Berhenti setelah membuat PR. Merge hanya oleh human operator.
