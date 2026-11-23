@@ -73,10 +73,14 @@ CREATE TABLE IF NOT EXISTS blocked_signals (
     confidence_at_time REAL NOT NULL,
     would_be_entry_price REAL NOT NULL,
     current_spread REAL NOT NULL,
-    details TEXT
+    details TEXT,
+    origin TEXT NOT NULL DEFAULT 'LIVE' CHECK (origin IN ('LIVE', 'REPLAY')),
+    replay_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_blocked_signals_timestamp ON blocked_signals(timestamp_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_signals_dedup
+ON blocked_signals(pair, timestamp_utc, strategy_selected, reason_blocked, origin);
 
 -- --------------------------------------------------------------------
 -- 4. Market Candles
@@ -123,6 +127,7 @@ CREATE TABLE IF NOT EXISTS bar_cursors (
     timeframe TEXT NOT NULL,
     last_closed_bar_ts INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
+    config_hash TEXT,
     PRIMARY KEY (symbol, timeframe)
 ) STRICT;
 
@@ -143,6 +148,8 @@ CREATE TABLE IF NOT EXISTS signal_observations (
     partial_skipped_min_lot INTEGER DEFAULT 0,
     r_realized_net REAL DEFAULT 0.0,
     exit_reason TEXT,
+    origin TEXT NOT NULL DEFAULT 'LIVE' CHECK (origin IN ('LIVE', 'REPLAY')),
+    replay_id TEXT,
     UNIQUE (symbol, bar_ts, strategy_id)
 ) STRICT;
 
@@ -162,4 +169,27 @@ CREATE TABLE IF NOT EXISTS news_telemetry (
     range_15m REAL,
     range_60m REAL,
     PRIMARY KEY (event_id, symbol, release_ts)
+) STRICT;
+
+-- --------------------------------------------------------------------
+-- 9. Replay Runs (Audit Trail Eksekusi Restart Gap Replay)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS replay_runs (
+    replay_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    last_cursor_ts INTEGER NOT NULL,
+    first_missed_bar_ts INTEGER NOT NULL,
+    last_missed_bar_ts INTEGER NOT NULL,
+    missed_count INTEGER NOT NULL,
+    started_at_utc TEXT NOT NULL,
+    finished_at_utc TEXT,
+    status TEXT NOT NULL CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'BLOCKED', 'INTERRUPTED')),
+    replay_mode TEXT NOT NULL CHECK (replay_mode IN ('STRATEGY_ONLY', 'NEWS_BLOCK_ONLY')),
+    config_hash TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    observations_created INTEGER NOT NULL DEFAULT 0,
+    blocked_created INTEGER NOT NULL DEFAULT 0,
+    error_text TEXT
 ) STRICT;

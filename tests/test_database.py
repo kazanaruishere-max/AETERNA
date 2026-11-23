@@ -17,8 +17,10 @@ import pytest
 
 from engine.models import (
     BarCursorRecord,
+    BlockedSignalRecord,
     CandleRecord,
     NewsTelemetryRecord,
+    ReplayRunRecord,
     SignalObservationRecord,
     SystemStateRecord,
     TradeRecord,
@@ -40,7 +42,7 @@ def db(tmp_path: Path) -> DatabaseManager:
 
 
 def test_ddl_execution_and_tables_created(db: DatabaseManager) -> None:
-    """Verify all 8 tables are created cleanly."""
+    """Verify all 9 tables are created cleanly."""
     with db.get_connection() as conn:
         cursor = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
@@ -52,6 +54,7 @@ def test_ddl_execution_and_tables_created(db: DatabaseManager) -> None:
             "market_candles",
             "model_registry",
             "news_telemetry",
+            "replay_runs",
             "signal_observations",
             "system_state",
             "trades",
@@ -61,7 +64,7 @@ def test_ddl_execution_and_tables_created(db: DatabaseManager) -> None:
 
 
 def test_canonical_schema_file_on_disk() -> None:
-    """Verify db/schema.sql contains all 8 canonical table definitions."""
+    """Verify db/schema.sql contains all 9 canonical table definitions."""
     assert CANONICAL_SCHEMA_PATH.exists(), f"Missing file: {CANONICAL_SCHEMA_PATH}"
     ddl = load_canonical_ddl()
     for tbl in [
@@ -73,6 +76,7 @@ def test_canonical_schema_file_on_disk() -> None:
         "bar_cursors",
         "signal_observations",
         "news_telemetry",
+        "replay_runs",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {tbl}" in ddl, (
             f"Table {tbl} missing in db/schema.sql"
@@ -139,7 +143,9 @@ def test_foreign_key_accepts_registered_model(db: DatabaseManager) -> None:
     db.insert_trade(valid_trade)
 
     with db.get_connection() as conn:
-        cursor = conn.execute("SELECT * FROM trades WHERE trade_id = ?", ("TRD-20261030-0002",))
+        cursor = conn.execute(
+            "SELECT * FROM trades WHERE trade_id = ?", ("TRD-20261030-0002",)
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row["pair"] == "XAUUSD"
@@ -532,6 +538,21 @@ def test_new_domain_models_are_frozen_immutable() -> None:
         peak_spread_pts=1.0,
         max_z_score=1.0,
     )
+    replay_record = ReplayRunRecord(
+        replay_id="REP-FROZEN-001",
+        symbol="XAUUSD",
+        timeframe="M15",
+        last_cursor_ts=1,
+        first_missed_bar_ts=2,
+        last_missed_bar_ts=3,
+        missed_count=1,
+        started_at_utc="2026-11-23T00:00:00Z",
+        status="PENDING",
+        replay_mode="STRATEGY_ONLY",
+        config_hash="cfg",
+        strategy_id="strat",
+        model_id="model",
+    )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(cursor_record, "last_closed_bar_ts", 2)
@@ -539,3 +560,456 @@ def test_new_domain_models_are_frozen_immutable() -> None:
         setattr(signal_record, "state", "OPEN_VIRTUAL")
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(news_record, "max_z_score", 2.0)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(replay_record, "status", "COMPLETED")
+
+
+def test_replay_runs_schema_and_check_constraints(db: DatabaseManager) -> None:
+    """Verify replay_runs table schema and CHECK constraints on status and replay_mode."""
+    with db.get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='replay_runs';"
+        )
+        assert cursor.fetchone() is not None, "Table replay_runs missing."
+
+        conn.execute(
+            """
+            INSERT INTO replay_runs (
+                replay_id, symbol, timeframe, last_cursor_ts,
+                first_missed_bar_ts, last_missed_bar_ts, missed_count,
+                started_at_utc, status, replay_mode, config_hash,
+                strategy_id, model_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "REP-20261123-0001",
+                "XAUUSD",
+                "M15",
+                1795407300,
+                1795408200,
+                1795410000,
+                3,
+                "2026-11-23T05:26:48Z",
+                "RUNNING",
+                "STRATEGY_ONLY",
+                "sha256-test-cfg",
+                "volatility_breakout_m15",
+                "kronos_h4_v1",
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM replay_runs WHERE replay_id = ?",
+            ("REP-20261123-0001",),
+        ).fetchone()
+        assert row is not None
+        assert row["observations_created"] == 0
+        assert row["blocked_created"] == 0
+        assert row["error_text"] is None
+        assert row["finished_at_utc"] is None
+
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            conn.execute(
+                """
+                INSERT INTO replay_runs (
+                    replay_id, symbol, timeframe, last_cursor_ts,
+                    first_missed_bar_ts, last_missed_bar_ts, missed_count,
+                    started_at_utc, status, replay_mode, config_hash,
+                    strategy_id, model_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "REP-ERR-STATUS",
+                    "XAUUSD",
+                    "M15",
+                    1795407300,
+                    1795408200,
+                    1795410000,
+                    3,
+                    "2026-11-23T05:26:48Z",
+                    "INVALID_STATUS",
+                    "STRATEGY_ONLY",
+                    "sha256-test-cfg",
+                    "strat",
+                    "model",
+                ),
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            conn.execute(
+                """
+                INSERT INTO replay_runs (
+                    replay_id, symbol, timeframe, last_cursor_ts,
+                    first_missed_bar_ts, last_missed_bar_ts, missed_count,
+                    started_at_utc, status, replay_mode, config_hash,
+                    strategy_id, model_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "REP-ERR-MODE",
+                    "XAUUSD",
+                    "M15",
+                    1795407300,
+                    1795408200,
+                    1795410000,
+                    3,
+                    "2026-11-23T05:26:48Z",
+                    "RUNNING",
+                    "INVALID_MODE",
+                    "sha256-test-cfg",
+                    "strat",
+                    "model",
+                ),
+            )
+
+
+def test_origin_default_live_and_constraint(db: DatabaseManager) -> None:
+    """Verify origin defaults to 'LIVE' and CHECK rejects unauthorized origins."""
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO signal_observations (
+                signal_id, symbol, bar_ts, strategy_id, order_type,
+                state, entry_px, sl_px, tp_px, lot_virtual
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "SIG-ORIG-01",
+                "XAUUSD",
+                1700000000,
+                "strat",
+                "BUY",
+                "PENDING",
+                2700.0,
+                2690.0,
+                2720.0,
+                0.01,
+            ),
+        )
+        row = conn.execute(
+            "SELECT origin FROM signal_observations WHERE signal_id = 'SIG-ORIG-01'"
+        ).fetchone()
+        assert row is not None and row["origin"] == "LIVE"
+
+        conn.execute(
+            """
+            INSERT INTO blocked_signals (
+                timestamp_utc, pair, direction, strategy_selected,
+                reason_blocked, confidence_at_time, would_be_entry_price, current_spread
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-11-23T00:00:00Z",
+                "XAUUSD",
+                "LONG",
+                "strat",
+                "risk_gate_daily_loss",
+                80.0,
+                2700.0,
+                1.5,
+            ),
+        )
+        row_b = conn.execute(
+            "SELECT origin FROM blocked_signals WHERE timestamp_utc = '2026-11-23T00:00:00Z'"
+        ).fetchone()
+        assert row_b is not None and row_b["origin"] == "LIVE"
+
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            conn.execute(
+                """
+                INSERT INTO signal_observations (
+                    signal_id, symbol, bar_ts, strategy_id, order_type,
+                    state, entry_px, sl_px, tp_px, lot_virtual, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "SIG-BAD-ORIG",
+                    "XAUUSD",
+                    1700000900,
+                    "strat",
+                    "BUY",
+                    "PENDING",
+                    2700.0,
+                    2690.0,
+                    2720.0,
+                    0.01,
+                    "BACKTEST",
+                ),
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            conn.execute(
+                """
+                INSERT INTO blocked_signals (
+                    timestamp_utc, pair, direction, strategy_selected,
+                    reason_blocked, confidence_at_time, would_be_entry_price, current_spread, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-11-23T00:15:00Z",
+                    "XAUUSD",
+                    "LONG",
+                    "strat",
+                    "risk_gate_daily_loss",
+                    80.0,
+                    2700.0,
+                    1.5,
+                    "UNKNOWN",
+                ),
+            )
+
+
+def test_replay_id_nullable(db: DatabaseManager) -> None:
+    """Verify replay_id column is nullable across signal_observations and blocked_signals."""
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO signal_observations (
+                signal_id, symbol, bar_ts, strategy_id, order_type,
+                state, entry_px, sl_px, tp_px, lot_virtual, replay_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "SIG-REPID-NULL",
+                "XAUUSD",
+                1700001000,
+                "strat",
+                "BUY",
+                "PENDING",
+                2700.0,
+                2690.0,
+                2720.0,
+                0.01,
+                None,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO signal_observations (
+                signal_id, symbol, bar_ts, strategy_id, order_type,
+                state, entry_px, sl_px, tp_px, lot_virtual, origin, replay_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "SIG-REPID-VAL",
+                "XAUUSD",
+                1700002000,
+                "strat",
+                "BUY",
+                "PENDING",
+                2700.0,
+                2690.0,
+                2720.0,
+                0.01,
+                "REPLAY",
+                "REP-001",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO blocked_signals (
+                timestamp_utc, pair, direction, strategy_selected,
+                reason_blocked, confidence_at_time, would_be_entry_price, current_spread, replay_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-11-23T01:00:00Z",
+                "XAUUSD",
+                "LONG",
+                "strat",
+                "risk_gate_daily_loss",
+                80.0,
+                2700.0,
+                1.5,
+                None,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO blocked_signals (
+                timestamp_utc, pair, direction, strategy_selected,
+                reason_blocked, confidence_at_time, would_be_entry_price, current_spread, origin, replay_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-11-23T01:15:00Z",
+                "XAUUSD",
+                "LONG",
+                "strat",
+                "risk_gate_daily_loss",
+                80.0,
+                2700.0,
+                1.5,
+                "REPLAY",
+                "REP-001",
+            ),
+        )
+        r1 = conn.execute(
+            "SELECT replay_id FROM signal_observations WHERE signal_id = 'SIG-REPID-NULL'"
+        ).fetchone()
+        r2 = conn.execute(
+            "SELECT replay_id FROM signal_observations WHERE signal_id = 'SIG-REPID-VAL'"
+        ).fetchone()
+        r3 = conn.execute(
+            "SELECT replay_id FROM blocked_signals WHERE timestamp_utc = '2026-11-23T01:00:00Z'"
+        ).fetchone()
+        r4 = conn.execute(
+            "SELECT replay_id FROM blocked_signals WHERE timestamp_utc = '2026-11-23T01:15:00Z'"
+        ).fetchone()
+        assert r1 is not None and r1["replay_id"] is None
+        assert r2 is not None and r2["replay_id"] == "REP-001"
+        assert r3 is not None and r3["replay_id"] is None
+        assert r4 is not None and r4["replay_id"] == "REP-001"
+
+
+def test_bar_cursors_config_hash_nullable(db: DatabaseManager) -> None:
+    """Verify config_hash column in bar_cursors is nullable and persists values."""
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO bar_cursors (symbol, timeframe, last_closed_bar_ts, updated_at_ms, config_hash)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("XAUUSD", "M15", 1700000000, 1700000000000, None),
+        )
+        row_null = conn.execute(
+            "SELECT config_hash FROM bar_cursors WHERE symbol='XAUUSD' AND timeframe='M15'"
+        ).fetchone()
+        assert row_null is not None and row_null["config_hash"] is None
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO bar_cursors (symbol, timeframe, last_closed_bar_ts, updated_at_ms, config_hash)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("XAUUSD", "H1", 1700000000, 1700000000000, "sha256-deadbeef"),
+        )
+        row_val = conn.execute(
+            "SELECT config_hash FROM bar_cursors WHERE symbol='XAUUSD' AND timeframe='H1'"
+        ).fetchone()
+        assert row_val is not None and row_val["config_hash"] == "sha256-deadbeef"
+
+
+def test_blocked_signals_unique_dedup_index(db: DatabaseManager) -> None:
+    """Verify OD-04 unique index idx_blocked_signals_dedup exists and deduplicates."""
+    with db.get_connection() as conn:
+        idx = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_blocked_signals_dedup';"
+        ).fetchone()
+        assert idx is not None, (
+            "Index idx_blocked_signals_dedup does not exist in sqlite_master."
+        )
+
+        insert_sql = """
+        INSERT INTO blocked_signals (
+            timestamp_utc, pair, direction, strategy_selected,
+            reason_blocked, confidence_at_time, would_be_entry_price,
+            current_spread, origin
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        conn.execute(
+            insert_sql,
+            (
+                "2026-11-23T04:30:00Z",
+                "XAUUSD",
+                "LONG",
+                "strat_vb",
+                "risk_gate_daily_loss",
+                75.0,
+                2750.0,
+                1.5,
+                "REPLAY",
+            ),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+            conn.execute(
+                insert_sql,
+                (
+                    "2026-11-23T04:30:00Z",
+                    "XAUUSD",
+                    "LONG",
+                    "strat_vb",
+                    "risk_gate_daily_loss",
+                    80.0,
+                    2751.0,
+                    1.6,
+                    "REPLAY",
+                ),
+            )
+
+        # Same tuple with origin='LIVE' succeeds because origin is part of unique index
+        conn.execute(
+            insert_sql,
+            (
+                "2026-11-23T04:30:00Z",
+                "XAUUSD",
+                "LONG",
+                "strat_vb",
+                "risk_gate_daily_loss",
+                75.0,
+                2750.0,
+                1.5,
+                "LIVE",
+            ),
+        )
+        rows = conn.execute("SELECT COUNT(*) AS total FROM blocked_signals;").fetchone()
+        assert rows is not None and rows["total"] == 2
+
+
+def test_dataclass_defaults_backward_compatible() -> None:
+    """Verify model dataclasses retain backward compatibility for callers without new fields."""
+    cursor = BarCursorRecord(
+        symbol="XAUUSD",
+        timeframe="M15",
+        last_closed_bar_ts=1700000000,
+        updated_at_ms=1700000000000,
+    )
+    assert cursor.config_hash is None
+
+    obs = SignalObservationRecord(
+        signal_id="SIG-BC-001",
+        symbol="XAUUSD",
+        bar_ts=1700000000,
+        strategy_id="strat",
+        order_type="MARKET",
+        state="PENDING",
+        entry_px=2750.0,
+        sl_px=2740.0,
+        tp_px=2770.0,
+        lot_virtual=0.01,
+    )
+    assert obs.origin == "LIVE"
+    assert obs.replay_id is None
+
+    blocked = BlockedSignalRecord(
+        timestamp_utc="2026-11-23T00:00:00Z",
+        pair="XAUUSD",
+        direction="LONG",
+        strategy_selected="strat",
+        reason_blocked="risk_gate_daily_loss",
+        confidence_at_time=80.0,
+        would_be_entry_price=2750.0,
+        current_spread=1.5,
+    )
+    assert blocked.origin == "LIVE"
+    assert blocked.replay_id is None
+
+    replay = ReplayRunRecord(
+        replay_id="REP-001",
+        symbol="XAUUSD",
+        timeframe="M15",
+        last_cursor_ts=1700000000,
+        first_missed_bar_ts=1700000900,
+        last_missed_bar_ts=1700001800,
+        missed_count=2,
+        started_at_utc="2026-11-23T01:00:00Z",
+        status="RUNNING",
+        replay_mode="STRATEGY_ONLY",
+        config_hash="sha256-hash",
+        strategy_id="strat",
+        model_id="model",
+    )
+    assert replay.finished_at_utc is None
+    assert replay.observations_created == 0
+    assert replay.blocked_created == 0
+    assert replay.error_text is None
