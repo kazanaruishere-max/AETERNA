@@ -1,5 +1,5 @@
 ---
-state_version: 28
+state_version: 30
 updated_utc: "2026-11-23"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -29,7 +29,7 @@ gate_status:
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
   GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
-next_action: "XAUUSD focus locked. Restart gap incident recorded locally; PLAN-08 contract merged at c726cbf. Next: approve REQ-RUNTIME-011, assign active_task, create DATA sub-task. No replay implementation, runtime adapter, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
+next_action: "XAUUSD focus locked. Live P1 stopped at 08:00Z with NO_SETUP; restart gap incident recorded locally; PLAN-08 contract merged at c726cbf. GitHub Actions triggers optimized locally: PR-only CI, code-gated jobs, monthly CodeQL, MT5-only Windows. Next: validate first PR, then approve REQ-RUNTIME-011 and execute DATA-A only. No replay implementation, runtime adapter, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
 ---
 
 # AETERNA Agent State
