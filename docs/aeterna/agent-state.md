@@ -1,5 +1,5 @@
 ---
-state_version: 26
+state_version: 27
 updated_utc: "2026-11-23"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -29,7 +29,7 @@ gate_status:
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
   GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
-next_action: "XAUUSD focus locked. Weekday: testing/fix/polish + live P1 E2E. Weekend: PLAN-07 contract spec and PLAN-08 restart-gap replay. Contract prompt: .handoff/tasks/TASK-M7-RESTART-GAP-REPLAY-CONTRACT.md. No runtime adapter, replay implementation, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
+next_action: "XAUUSD focus locked. Restart gap incident recorded locally; PLAN-08 contract merged at c726cbf. Next: approve REQ-RUNTIME-011, assign active_task, create DATA sub-task. No replay implementation, runtime adapter, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
 ---
 
 # AETERNA Agent State
@@ -81,5 +81,5 @@ AETERNA Quant adalah platform riset dan eksekusi XAUUSD deterministik. Fase akti
 - PLAN-05 Floating/spike/leverage/margin: ACCEPTED_PHASED_DEFENSE | `.handoff/plans/PLAN-05-MARGIN-SPIKE-DEFENSE.md`
 - PLAN-06 User forward-test telemetry: CONDITIONAL_INTERNAL_ONLY | `.handoff/plans/PLAN-06-USER-FORWARD-TELEMETRY.md`
 - PLAN-07 Instrument adapter workflow: ACCEPTED_AS_WORKFLOW_ONLY | contract-first + XAUUSD focus | `.handoff/plans/PLAN-07-INSTRUMENT-ADAPTER-WORKFLOW.md`
-- PLAN-08 Restart gap replay: PROPOSED_NOT_APPROVED | design + contract PR first | `.handoff/plans/PLAN-08-RESTART-GAP-REPLAY.md`
+- PLAN-08 Restart gap replay: CONTRACT_MERGED | `c726cbf` | `docs/aeterna/restart-gap-replay-contract.md`
 - Register: `.handoff/plans/PLAN-REGISTER-2026-11-22.md`; full ledger: `.handoff/2026-11-22.md` / `.handoff/latest.md`.
