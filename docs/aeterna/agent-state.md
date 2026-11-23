@@ -29,7 +29,7 @@ gate_status:
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
   GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
-next_action: "XAUUSD focus locked. Weekday: testing/fix/polish + live P1 E2E. Weekend: PLAN-07 contract spec and PLAN-08 restart-gap replay design docs only. Plan register: .handoff/plans/PLAN-REGISTER-2026-11-22.md. No runtime adapter, replay implementation, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
+next_action: "XAUUSD focus locked. Weekday: testing/fix/polish + live P1 E2E. Weekend: PLAN-07 contract spec and PLAN-08 restart-gap replay. Contract prompt: .handoff/tasks/TASK-M7-RESTART-GAP-REPLAY-CONTRACT.md. No runtime adapter, replay implementation, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
 ---
 
 # AETERNA Agent State
