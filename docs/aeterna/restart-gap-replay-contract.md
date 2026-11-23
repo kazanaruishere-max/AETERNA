@@ -9,6 +9,11 @@
 - `covers_req`: [REQ-RUNTIME-001, REQ-RUNTIME-003, REQ-RUNTIME-011]
 - `owner`: `aeterna-architect` + `aeterna-risk` + `aeterna-verifier` + human operator
 - `created_utc`: "2026-11-23"
+- `operator_decisions`:
+  - `OD-01`: 32 bars / 8 hours policy cap
+  - `OD-02`: REPLAY_RESEARCH_ONLY
+  - `OD-03`: DEFER_OVERRIDES_TO_PHASE_3
+  - `OD-04`: COMPOUND_UNIQUE_INDEX
 
 ---
 
@@ -183,7 +188,7 @@ For each bar $t \in [T_{\text{first\_missed}}, T_{\text{last\_missed}}]$:
 
 ### 4.3 Idempotency Guarantees
 - **Observation Deduplication**: `signal_observations` maintains `UNIQUE(symbol, bar_ts, strategy_id)`. Re-evaluating an identical bar will not produce duplicate observations.
-- **Blocked Signal Deduplication**: Proposed compound uniqueness guard `(symbol, bar_ts, strategy_id, reason, origin)` ensures re-run resilience.
+- **Blocked Signal Deduplication**: OD-04 resolved to a compound UNIQUE index. Logical key `(symbol, bar_ts, strategy_id, reason, origin)` maps to physical columns `(pair, timestamp_utc, strategy_selected, reason_blocked, origin)`, ensuring re-run resilience.
 - **Crash Immunity**: If bar $N$ fails or crashes mid-evaluation, the cursor remains at $N-1$. No duplicate records exist for $N$, and restarting will cleanly re-evaluate $N$.
 
 ---
@@ -214,7 +219,7 @@ Operational and verification queries must enforce explicit provenance filtering:
   WHERE origin = 'REPLAY' AND replay_id = :target_replay_id;
   ```
 
-Replay observations are partitioned exclusively for backfill audit, gap filling, and model diagnostics. They are legally and procedurally distinct from live execution samples.
+Replay observations are partitioned exclusively for backfill audit, gap filling, and model diagnostics. Under adopted decision **OD-02**, `origin = 'REPLAY'` observations are usable for exploratory research only, and are strictly and permanently excluded from the live track record, forward-test performance metrics, and all milestone gates (including `GATE-VIRTUAL-JOURNAL`). They are legally and procedurally distinct from live execution samples.
 
 ---
 
@@ -303,28 +308,46 @@ CREATE TABLE replay_runs (
 
 -- ALTER TABLE bar_cursors ADD COLUMN config_hash TEXT;
 
--- 3. Blocked Signals Deduplication Index (Proposed)
--- CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_signals_dedup 
--- ON blocked_signals(symbol, bar_ts, strategy_id, reason, origin);
+-- 3. Blocked Signals Deduplication Index (OD-04 RESOLVED)
+-- Logical key: (symbol, bar_ts, strategy_id, reason, origin)
+-- Physical key uses existing blocked_signals columns:
+--   pair = symbol
+--   timestamp_utc = canonical bar-open UTC timestamp
+--   strategy_selected = strategy_id
+--   reason_blocked = reason
+--   origin = provenance
+CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_signals_dedup
+ON blocked_signals(pair, timestamp_utc, strategy_selected, reason_blocked, origin);
 ```
 
 ---
 
 ## 9. Operator Configuration: `RESTART_REPLAY_MAX_BARS`
 
-### 9.1 Absolute Prohibition of Invented Defaults
-In accordance with `PLAN-08 §11` and `AUTONOMOUS_BUILDER.md`:
-- The configuration parameter `RESTART_REPLAY_MAX_BARS` represents an explicit risk and operational policy decision.
-- **The builder harness and system code MUST NOT invent a default value** (e.g. 10, 24, 96).
-- If `RESTART_REPLAY_MAX_BARS` is missing, null, or unconfigured in the runtime environment, the engine must immediately fail closed upon startup with error:
-  `CONFIG_ERROR: RESTART_REPLAY_MAX_BARS is not set. Operator decision required.`
+### 9.1 Resolved Operator Policy Cap (OD-01)
+Operator has adopted the architectural recommendation:
 
-### 9.2 Configuration Schema Proposal
-Proposed environment / runtime parameters:
-```bash
+```text
+RESTART_REPLAY_MAX_BARS = 32
+```
+
+This equals **8 hours of M15 bars** and is an operational safety cap only. It is **not** a backtest result, statistical edge, win-rate claim, or performance estimate.
+
+Builders and runtime code MUST NOT alter this value without a new explicit operator decision.
+
+### 9.2 Fail-Closed Requirement
+The runtime configuration must still be explicit:
+
+```text
 RESTART_REPLAY_MODE=auto            # options: auto | off | dry_run
-RESTART_REPLAY_MAX_BARS=            # REQUIRED OPERATOR SETTING (No default)
+RESTART_REPLAY_MAX_BARS=32          # OPERATOR POLICY CAP (OD-01)
 RESTART_REPLAY_STATE_MODE=STRATEGY_ONLY
+```
+
+If `RESTART_REPLAY_MAX_BARS` is missing, null, or does not equal the approved operator cap, the engine must fail closed with:
+
+```text
+CONFIG_ERROR: RESTART_REPLAY_MAX_BARS policy mismatch. Operator decision required.
 ```
 
 ---
@@ -376,7 +399,7 @@ When implementation begins under a future task packet, the test suite must prove
 | 11 | `test_replay_does_not_send_live_observation_alert` | Mock Telegram publisher during 5-bar replay with valid breakout signals. | Live observation alert mock called 0 times; Admin summary mock called exactly 1 time. |
 | 12 | `test_zero_lookahead_h4_cutoff` | Evaluate bar at timestamp $T$. Inspect H4 candle feeder context. | Max H4 candle timestamp $\le T$. No future H4 candles accessible to Kronos model. |
 | 13 | `test_missing_candles_blocks_not_skips` | Broker candle feeder returns incomplete series with missing candle at $T_2$. | Replay terminates with status `BLOCKED`, cursor halts at $T_1$, does NOT skip to $T_3$. |
-| 14 | `test_blocked_signals_deduped` | Replay evaluates bar triggering risk filter twice under failure test harness. | No duplicate entry in `blocked_signals` for `(symbol, bar_ts, strategy_id, reason, origin)`. |
+| 14 | `test_blocked_signals_deduped` | Replay evaluates bar triggering risk filter twice under failure test harness. | Compound UNIQUE index prevents duplicate `(pair, timestamp_utc, strategy_selected, reason_blocked, origin)`; logical key `(symbol, bar_ts, strategy_id, reason, origin)` remains 1 row. |
 | 15 | `test_replay_summary_counts` | Completed replay run across $N$ bars generating $X$ observations and $Y$ blocked. | `replay_runs` row and Telegram summary payload exactly match $N, X, Y$, and `COMPLETED`. |
 
 ---
@@ -395,11 +418,11 @@ When implementation begins under a future task packet, the test suite must prove
 
 ---
 
-## 13. Open Decisions for Operator Resolution
+## 13. Operator Decisions — Adopted
 
-| ID | Decision Item | Context & Recommendation | Status |
+| ID | Decision Item | Adopted Decision | Status |
 | :--- | :--- | :--- | :---: |
-| **OD-01** | Value for `RESTART_REPLAY_MAX_BARS` | Maximum allowed bars before fail-closed. Recommendation: `32` bars (8 hours) for normal intraday outages. Outages $> 8$ hours require human manual backfill audit. | PENDING_OPERATOR |
-| **OD-02** | Research Usage of `origin='REPLAY'` | May offline analytics query `'REPLAY'` observations for backtest statistical validation? Recommendation: Permitted for exploratory research, but strictly excluded from live track records and milestone gates. | PENDING_OPERATOR |
-| **OD-03** | Telegram Admin Interactive Override | Should Telegram Admin bot support `/replay_skip` or `/replay_force` commands when stuck in `GAP_TOO_LARGE`? Recommendation: Defer until Phase 3; fail-closed manual config preferred initially. | PENDING_OPERATOR |
-| **OD-04** | Deduplication Key for `blocked_signals` | Add compound UNIQUE index on `(symbol, bar_ts, strategy_id, reason, origin)` vs deduplication check in repository. Recommendation: Compound unique index in schema migration. | PENDING_OPERATOR |
+| **OD-01** | Value for `RESTART_REPLAY_MAX_BARS` | `32` M15 bars / 8 hours, operational policy cap only; outages beyond this require human manual backfill audit. | RESOLVED_OPERATOR |
+| **OD-02** | Research Usage of `origin='REPLAY'` | Permitted for exploratory research only; strictly excluded from live track records and milestone gates. | RESOLVED_OPERATOR |
+| **OD-03** | Telegram Admin Interactive Override | Defer `/replay_skip` and `/replay_force` to Phase 3; fail-closed manual config first. | RESOLVED_OPERATOR |
+| **OD-04** | Deduplication Key for `blocked_signals` | Compound UNIQUE index on physical columns `(pair, timestamp_utc, strategy_selected, reason_blocked, origin)`. | RESOLVED_OPERATOR |
