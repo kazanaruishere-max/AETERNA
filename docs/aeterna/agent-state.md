@@ -1,5 +1,5 @@
 ---
-state_version: 27
+state_version: 28
 updated_utc: "2026-11-23"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -10,10 +10,10 @@ verification_protocol: "BUILDER_SELF_VERIFY_FIRST"
 active_task: null
 task_packet: null
 branch: "main"
-authored_from_head: "a6acf3b"
+authored_from_head: "486c322"
 base_ref: "main"
-base_commit: "a6acf3b"
-main_head: "a6acf3b"
+base_commit: "486c322"
+main_head: "486c322"
 allowed_paths: []
 gate_status:
   GATE-RUNTIME-LOOP-B: "PASSED"
