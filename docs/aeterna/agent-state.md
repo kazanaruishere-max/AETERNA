@@ -1,5 +1,5 @@
 ---
-state_version: 31
+state_version: 32
 updated_utc: "2026-11-23"
 project: "AETERNA Quant"
 phase: "P1 Journal"
@@ -7,14 +7,17 @@ mode: "SIGNAL_ONLY"
 active_role: "aeterna-lead"
 audit_protocol: "AUDIT_BY_EXCEPTION"
 verification_protocol: "BUILDER_SELF_VERIFY_FIRST"
-active_task: null
-task_packet: null
+active_task: "TASK-M7-RESTART-GAP-REPLAY-DATA-A"
+task_packet: ".handoff/tasks/TASK-M7-RESTART-GAP-REPLAY-DATA-A.md"
 branch: "main"
-authored_from_head: "d314556"
+authored_from_head: "4597586"
 base_ref: "main"
-base_commit: "d314556"
-main_head: "d314556"
-allowed_paths: []
+base_commit: "4597586"
+main_head: "4597586"
+allowed_paths:
+  - "db/schema.sql"
+  - "engine/models/__init__.py"
+  - "tests/test_database.py"
 gate_status:
   GATE-RUNTIME-LOOP-B: "PASSED"
   GATE-RUNTIME-VIRTUAL-TRACKER: "PASSED"
@@ -29,7 +32,9 @@ gate_status:
   GATE-PROD_CREDENTIAL_SOURCE: "RESOLVED_ENV_LOGGED"
   GATE-P1-E2E-SPREAD_ZSCORE: "CODE_PASS_LIVE_BLOCKED"
   GATE-PUBLIC-RELEASE: "RELEASE_OPENAETERNA_BETA_DEV_AETERNA"
-next_action: "XAUUSD focus locked. Live P1 stopped at 08:00Z with NO_SETUP; restart gap incident recorded locally; PLAN-08 contract merged at c726cbf. GitHub Actions triggers optimized and merged at d314556: PR-only CI, code-gated jobs, monthly CodeQL, MT5-only Windows. Next: validate first PR, then approve REQ-RUNTIME-011 and execute DATA-A only. No replay implementation, runtime adapter, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
+  GATE-RESTART-GAP-REPLAY-CONTRACT: "PASSED"
+  GATE-RESTART-GAP-REPLAY: "QUEUED"
+next_action: "Operator approved REQ-RUNTIME-011. Execute TASK-M7-RESTART-GAP-REPLAY-DATA-A only, with allowed_paths db/schema.sql, engine/models/__init__.py, tests/test_database.py. Base commit 4597586. No DATA-B/ENGINE/E2E, runtime adapter, PSAR EA, k8s, weekly-only news, or user telemetry before gates."
 ---
 
 # AETERNA Agent State

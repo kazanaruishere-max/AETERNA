@@ -4,7 +4,7 @@
 - `plan_id`: PLAN-08 (`.handoff/plans/PLAN-08-RESTART-GAP-REPLAY.md`)
 - `task_id`: TASK-M7-RESTART-GAP-REPLAY-CONTRACT (`.handoff/tasks/TASK-M7-RESTART-GAP-REPLAY-CONTRACT.md`)
 - `phase`: Phase 0 (Contract / Specification Only)
-- `status`: PROPOSED_CONTRACT_ONLY
+- `status`: APPROVED_CONTRACT
 - `target_milestone`: M7 / P1 Journal
 - `covers_req`: [REQ-RUNTIME-001, REQ-RUNTIME-003, REQ-RUNTIME-011]
 - `owner`: `aeterna-architect` + `aeterna-risk` + `aeterna-verifier` + human operator
@@ -17,23 +17,24 @@
 
 ---
 
-## 1. Explicit Non-Authorization & Boundary
+## 1. Approval Boundary
 
-> [!CAUTION]
-> **PHASE 0 CONTRACT ONLY — NO IMPLEMENTATION PERMITTED**  
-> This specification defines the mathematical formulas, state machine invariants, data integrity constraints, and test requirements for restart gap detection and replay.  
-> 
-> In accordance with `AGENTS.md` and `docs/aeterna/AUTONOMOUS_BUILDER.md`:
-> 1. **Do NOT write runtime code** in `engine/runtime/*`.
-> 2. **Do NOT modify `db/schema.sql`** or execute DDL against `data/trading.db`.
-> 3. **Do NOT implement replay logic**.
-> 4. **Do NOT modify or transmit** `order_send`, `PositionModify`, or interact with broker trading endpoints.
-> 5. **Do NOT terminate, restart, or signal 9router port 20128**.
-> 6. **Do NOT perform `gh pr merge`, `git merge`, or auto-merge**.
-> 7. **Do NOT introduce external dependencies**.
-> 8. **Do NOT include secrets, account IDs, tokens, or credentials** in documentation or tests.
+> [!IMPORTANT]
+> **CONTRACT APPROVED — IMPLEMENTATION REQUIRES A SEPARATE TASK PACKET**
+> This specification defines the mathematical formulas, state machine invariants, data integrity constraints, and test requirements for restart gap detection and replay.
+>
+> This document alone does **not** authorize code changes. Implementation is authorized only by operator-approved task packets with explicit `active_task` and `allowed_paths` in `docs/aeterna/agent-state.md`.
+>
+> The first authorized implementation packet is `TASK-M7-RESTART-GAP-REPLAY-DATA-A`.
+>
+> Universal prohibitions still apply:
+> 1. **Do NOT modify or transmit** `order_send`, `PositionModify`, or interact with broker trading endpoints.
+> 2. **Do NOT terminate, restart, or signal 9router port 20128**.
+> 3. **Do NOT perform `gh pr merge`, `git merge`, or auto-merge**.
+> 4. **Do NOT introduce external dependencies** unless explicitly allowed by the active task packet.
+> 5. **Do NOT include secrets, account IDs, tokens, or credentials** in documentation or tests.
 
-This contract serves as the prerequisite gate before any implementation task packet (such as `TASK-M7-RESTART-GAP-REPLAY-IMPLEMENT`) may be considered by the operator.
+This contract is the prerequisite gate for implementation task packets. Subsequent packets must declare scope explicitly.
 
 ---
 
