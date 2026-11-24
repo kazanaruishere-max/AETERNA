@@ -1013,3 +1013,338 @@ def test_dataclass_defaults_backward_compatible() -> None:
     assert replay.observations_created == 0
     assert replay.blocked_created == 0
     assert replay.error_text is None
+
+
+def test_old_db_migration_cleanly_and_preserves_existing_rows(tmp_path: Path) -> None:
+    """Verify an old DB lacking new columns migrates cleanly without losing existing rows."""
+    db_file = tmp_path / "legacy_trading.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        """
+        CREATE TABLE bar_cursors (
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            last_closed_bar_ts INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (symbol, timeframe)
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE signal_observations (
+            signal_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            bar_ts INTEGER NOT NULL,
+            strategy_id TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            state TEXT NOT NULL,
+            entry_px REAL NOT NULL,
+            sl_px REAL NOT NULL,
+            tp_px REAL NOT NULL,
+            lot_virtual REAL NOT NULL,
+            partial_skipped_min_lot INTEGER DEFAULT 0,
+            r_realized_net REAL DEFAULT 0.0,
+            exit_reason TEXT,
+            UNIQUE (symbol, bar_ts, strategy_id)
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE blocked_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_utc TEXT NOT NULL,
+            pair TEXT NOT NULL DEFAULT 'XAUUSD',
+            direction TEXT NOT NULL,
+            strategy_selected TEXT NOT NULL,
+            reason_blocked TEXT NOT NULL,
+            confidence_at_time REAL NOT NULL,
+            would_be_entry_price REAL NOT NULL,
+            current_spread REAL NOT NULL,
+            details TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO bar_cursors VALUES ('XAUUSD', 'M15', 1700000000, 1700000000000);"
+    )
+    conn.execute(
+        """
+        INSERT INTO signal_observations VALUES (
+            'SIG-LEGACY-01', 'XAUUSD', 1700000000, 'strat_vb', 'BUY', 'OPEN',
+            2750.0, 2740.0, 2770.0, 0.01, 0, 0.0, NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO blocked_signals (
+            timestamp_utc, pair, direction, strategy_selected, reason_blocked,
+            confidence_at_time, would_be_entry_price, current_spread, details
+        ) VALUES (
+            '2026-11-23T04:00:00Z', 'XAUUSD', 'LONG', 'strat_vb',
+            'risk_gate_daily_loss', 80.0, 2750.0, 1.5, 'legacy blocked'
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    manager = DatabaseManager(db_file)
+    manager.init_db()
+
+    with manager.get_connection() as check_conn:
+        cols_obs = {
+            r["name"]
+            for r in check_conn.execute("PRAGMA table_info(signal_observations);")
+        }
+        assert "origin" in cols_obs and "replay_id" in cols_obs
+        row_obs = check_conn.execute(
+            "SELECT * FROM signal_observations WHERE signal_id='SIG-LEGACY-01';"
+        ).fetchone()
+        assert row_obs is not None
+        assert row_obs["origin"] == "LIVE"
+        assert row_obs["replay_id"] is None
+        assert row_obs["entry_px"] == 2750.0
+
+        cols_blocked = {
+            r["name"] for r in check_conn.execute("PRAGMA table_info(blocked_signals);")
+        }
+        assert "origin" in cols_blocked and "replay_id" in cols_blocked
+        row_blk = check_conn.execute("SELECT * FROM blocked_signals;").fetchone()
+        assert row_blk is not None
+        assert row_blk["origin"] == "LIVE"
+        assert row_blk["replay_id"] is None
+
+        cursor_row = check_conn.execute("SELECT * FROM bar_cursors;").fetchone()
+        assert cursor_row is not None
+        assert cursor_row["config_hash"] is None
+        assert cursor_row["last_closed_bar_ts"] == 1700000000
+
+        idx = check_conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_blocked_signals_dedup';"
+        ).fetchone()
+        assert idx is not None
+
+
+def test_migration_is_idempotent(tmp_path: Path) -> None:
+    """Verify migration run multiple times succeeds without duplicate effects or errors."""
+    db_file = tmp_path / "idempotent_test.db"
+    manager = DatabaseManager(db_file)
+    manager.init_db()
+    manager.init_db()
+    manager.init_db()
+
+    with manager.get_connection() as conn:
+        tbl_count = conn.execute(
+            "SELECT COUNT(*) AS total FROM sqlite_master WHERE type='table' AND name='replay_runs';"
+        ).fetchone()
+        assert tbl_count is not None and tbl_count["total"] == 1
+
+
+def test_replay_run_repository_lifecycle(db: DatabaseManager) -> None:
+    """Verify create, get, update status, and list by status for ReplayRunRecord."""
+    run = ReplayRunRecord(
+        replay_id="REP-CRUD-001",
+        symbol="XAUUSD",
+        timeframe="M15",
+        last_cursor_ts=1700000000,
+        first_missed_bar_ts=1700000900,
+        last_missed_bar_ts=1700001800,
+        missed_count=2,
+        started_at_utc="2026-11-23T05:00:00Z",
+        status="PENDING",
+        replay_mode="STRATEGY_ONLY",
+        config_hash="sha256-test-cfg",
+        strategy_id="volatility_breakout_m15",
+        model_id="kronos_h4_v1",
+    )
+    db.create_replay_run(run)
+    fetched = db.get_replay_run("REP-CRUD-001")
+    assert fetched == run
+
+    db.update_replay_run_status("REP-CRUD-001", "RUNNING")
+    updated1 = db.get_replay_run("REP-CRUD-001")
+    assert updated1 is not None and updated1.status == "RUNNING"
+
+    db.update_replay_run_status(
+        "REP-CRUD-001",
+        "COMPLETED",
+        finished_at_utc="2026-11-23T05:01:00Z",
+        observations_created=4,
+        blocked_created=1,
+    )
+    updated2 = db.get_replay_run("REP-CRUD-001")
+    assert updated2 is not None
+    assert updated2.status == "COMPLETED"
+    assert updated2.finished_at_utc == "2026-11-23T05:01:00Z"
+    assert updated2.observations_created == 4
+    assert updated2.blocked_created == 1
+
+    run2 = dataclasses.replace(run, replay_id="REP-CRUD-002", status="INTERRUPTED")
+    db.create_replay_run(run2)
+
+    completed_runs = db.list_replay_runs_by_status("COMPLETED")
+    interrupted_runs = db.list_replay_runs_by_status("INTERRUPTED")
+    pending_runs = db.list_replay_runs_by_status("PENDING")
+
+    assert len(completed_runs) == 1 and completed_runs[0].replay_id == "REP-CRUD-001"
+    assert len(interrupted_runs) == 1 and interrupted_runs[0].replay_id == "REP-CRUD-002"
+    assert len(pending_runs) == 0
+
+
+def test_insert_replay_observation_unique_index(db: DatabaseManager) -> None:
+    """Verify insert_replay_observation sets REPLAY origin and rejects duplicates."""
+    obs = SignalObservationRecord(
+        signal_id="SIG-REP-001",
+        symbol="XAUUSD",
+        bar_ts=1700000900,
+        strategy_id="volatility_breakout_m15",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2750.0,
+        sl_px=2740.0,
+        tp_px=2770.0,
+        lot_virtual=0.01,
+        replay_id="REP-001",
+    )
+    assert db.insert_replay_observation(obs) is True
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT origin, replay_id FROM signal_observations WHERE signal_id='SIG-REP-001';"
+        ).fetchone()
+        assert row is not None
+        assert row["origin"] == "REPLAY"
+        assert row["replay_id"] == "REP-001"
+
+    duplicate = dataclasses.replace(obs, signal_id="SIG-REP-DUP")
+    assert db.insert_replay_observation(duplicate) is False
+    assert db.insert_signal_observation(duplicate) is False
+
+
+def test_insert_replay_blocked_signal_dedup(db: DatabaseManager) -> None:
+    """Verify insert_replay_blocked_signal sets REPLAY and handles duplicate rejection."""
+    blocked = BlockedSignalRecord(
+        timestamp_utc="2026-11-23T04:30:00Z",
+        pair="XAUUSD",
+        direction="LONG",
+        strategy_selected="strat_vb",
+        reason_blocked="risk_gate_daily_loss",
+        confidence_at_time=75.0,
+        would_be_entry_price=2750.0,
+        current_spread=1.5,
+        replay_id="REP-001",
+    )
+    assert db.insert_replay_blocked_signal(blocked) is True
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT origin, replay_id FROM blocked_signals WHERE replay_id='REP-001';"
+        ).fetchone()
+        assert row is not None
+        assert row["origin"] == "REPLAY"
+        assert row["replay_id"] == "REP-001"
+
+    assert db.insert_replay_blocked_signal(blocked) is False
+
+    # A LIVE signal with identical criteria succeeds because origin differs
+    db.insert_blocked_signal(blocked)
+    with db.get_connection() as conn:
+        total = conn.execute("SELECT COUNT(*) AS total FROM blocked_signals;").fetchone()
+        assert total is not None and total["total"] == 2
+
+
+def test_advance_bar_cursor_with_config_hash(db: DatabaseManager) -> None:
+    """Verify advance_bar_cursor_with_config_hash persists cursor and config hash."""
+    db.advance_bar_cursor_with_config_hash(
+        "XAUUSD", "M15", 1700000900, "sha256-hash-a", updated_at_ms=1700000900123
+    )
+    cursor1 = db.get_bar_cursor("XAUUSD", "M15")
+    assert cursor1 is not None
+    assert cursor1.symbol == "XAUUSD"
+    assert cursor1.timeframe == "M15"
+    assert cursor1.last_closed_bar_ts == 1700000900
+    assert cursor1.config_hash == "sha256-hash-a"
+    assert cursor1.updated_at_ms == 1700000900123
+
+    db.advance_bar_cursor_with_config_hash(
+        "XAUUSD", "M15", 1700001800, "sha256-hash-b"
+    )
+    cursor2 = db.get_bar_cursor("XAUUSD", "M15")
+    assert cursor2 is not None
+    assert cursor2.last_closed_bar_ts == 1700001800
+    assert cursor2.config_hash == "sha256-hash-b"
+    assert cursor2.updated_at_ms > 0
+
+
+def test_get_observations_and_blocked_by_origin_filter(db: DatabaseManager) -> None:
+    """Verify get_observations_by_origin and get_blocked_signals_by_origin segregation."""
+    live_obs = SignalObservationRecord(
+        signal_id="SIG-LIVE-01",
+        symbol="XAUUSD",
+        bar_ts=1700000000,
+        strategy_id="strat_vb",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2750.0,
+        sl_px=2740.0,
+        tp_px=2770.0,
+        lot_virtual=0.01,
+        origin="LIVE",
+    )
+    db.insert_signal_observation(live_obs)
+
+    rep_obs = SignalObservationRecord(
+        signal_id="SIG-REP-01",
+        symbol="XAUUSD",
+        bar_ts=1700000900,
+        strategy_id="strat_vb",
+        order_type="MARKET",
+        state="PENDING_VIRTUAL",
+        entry_px=2750.0,
+        sl_px=2740.0,
+        tp_px=2770.0,
+        lot_virtual=0.01,
+        replay_id="REP-001",
+    )
+    db.insert_replay_observation(rep_obs)
+
+    live_res = db.get_observations_by_origin("LIVE")
+    replay_res = db.get_observations_by_origin("REPLAY")
+    assert len(live_res) == 1 and live_res[0].signal_id == "SIG-LIVE-01"
+    assert len(replay_res) == 1 and replay_res[0].signal_id == "SIG-REP-01"
+    assert replay_res[0].origin == "REPLAY"
+
+    live_blk = BlockedSignalRecord(
+        timestamp_utc="2026-11-23T04:00:00Z",
+        pair="XAUUSD",
+        direction="LONG",
+        strategy_selected="strat_vb",
+        reason_blocked="risk_gate_daily_loss",
+        confidence_at_time=80.0,
+        would_be_entry_price=2750.0,
+        current_spread=1.5,
+        origin="LIVE",
+    )
+    db.insert_blocked_signal(live_blk)
+
+    rep_blk = BlockedSignalRecord(
+        timestamp_utc="2026-11-23T04:15:00Z",
+        pair="XAUUSD",
+        direction="LONG",
+        strategy_selected="strat_vb",
+        reason_blocked="risk_gate_daily_loss",
+        confidence_at_time=80.0,
+        would_be_entry_price=2750.0,
+        current_spread=1.5,
+        replay_id="REP-001",
+    )
+    db.insert_replay_blocked_signal(rep_blk)
+
+    live_blk_res = db.get_blocked_signals_by_origin("LIVE")
+    rep_blk_res = db.get_blocked_signals_by_origin("REPLAY")
+    assert len(live_blk_res) == 1 and live_blk_res[0].origin == "LIVE"
+    assert len(rep_blk_res) == 1 and rep_blk_res[0].origin == "REPLAY"
+    assert rep_blk_res[0].replay_id == "REP-001"

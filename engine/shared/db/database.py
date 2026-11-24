@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, Sequence
 
 from engine.models import (
     BarCursorRecord,
@@ -23,6 +24,9 @@ from engine.models import (
     CandleSource,
     ModelRegistryRecord,
     NewsTelemetryRecord,
+    RecordOrigin,
+    ReplayRunRecord,
+    ReplayStatus,
     SignalObservationRecord,
     SystemStateRecord,
     Timeframe,
@@ -83,11 +87,78 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Idempotently migrate existing tables to include restart-gap replay columns/indexes."""
+        # 1. signal_observations: origin DEFAULT 'LIVE', replay_id
+        table_obs = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='signal_observations';"
+        ).fetchone()
+        if table_obs is not None:
+            cols = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(signal_observations);"
+                ).fetchall()
+            }
+            if "origin" not in cols:
+                conn.execute(
+                    "ALTER TABLE signal_observations ADD COLUMN origin TEXT NOT NULL DEFAULT 'LIVE' CHECK (origin IN ('LIVE', 'REPLAY'));"
+                )
+            if "replay_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE signal_observations ADD COLUMN replay_id TEXT;"
+                )
+
+        # 2. blocked_signals: origin DEFAULT 'LIVE', replay_id, idx_blocked_signals_dedup
+        table_blocked = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='blocked_signals';"
+        ).fetchone()
+        if table_blocked is not None:
+            cols = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(blocked_signals);"
+                ).fetchall()
+            }
+            if "origin" not in cols:
+                conn.execute(
+                    "ALTER TABLE blocked_signals ADD COLUMN origin TEXT NOT NULL DEFAULT 'LIVE' CHECK (origin IN ('LIVE', 'REPLAY'));"
+                )
+            if "replay_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE blocked_signals ADD COLUMN replay_id TEXT;"
+                )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_signals_dedup "
+                "ON blocked_signals(pair, timestamp_utc, strategy_selected, reason_blocked, origin);"
+            )
+
+        # 3. bar_cursors: config_hash
+        table_cursors = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bar_cursors';"
+        ).fetchone()
+        if table_cursors is not None:
+            cols = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(bar_cursors);"
+                ).fetchall()
+            }
+            if "config_hash" not in cols:
+                conn.execute(
+                    "ALTER TABLE bar_cursors ADD COLUMN config_hash TEXT;"
+                )
+
     def init_db(self) -> None:
         """Initialize database schema from canonical db/schema.sql and seed baseline model."""
         ddl_script = load_canonical_ddl(self.schema_path)
         with self.get_connection() as conn:
+            # Pre-DDL migration ensures legacy tables have required columns before index creation
+            self._migrate_schema(conn)
             conn.executescript(ddl_script)
+            # Post-DDL migration ensures any newly created or existing tables have all columns/indexes
+            self._migrate_schema(conn)
 
             # Auto-seed baseline model if not already present
             cursor = conn.execute(
@@ -228,8 +299,9 @@ class DatabaseManager:
         query = """
         INSERT INTO blocked_signals (
             timestamp_utc, pair, direction, strategy_selected, reason_blocked,
-            confidence_at_time, would_be_entry_price, current_spread, details
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            confidence_at_time, would_be_entry_price, current_spread, details,
+            origin, replay_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         with self.get_connection() as conn:
             conn.execute(
@@ -244,6 +316,8 @@ class DatabaseManager:
                     signal.would_be_entry_price,
                     signal.current_spread,
                     signal.details,
+                    signal.origin,
+                    signal.replay_id,
                 ),
             )
 
@@ -308,7 +382,7 @@ class DatabaseManager:
     def get_bar_cursor(self, symbol: str, timeframe: str) -> BarCursorRecord | None:
         """Retrieve the last closed bar cursor for a symbol/timeframe."""
         query = """
-        SELECT symbol, timeframe, last_closed_bar_ts, updated_at_ms
+        SELECT symbol, timeframe, last_closed_bar_ts, updated_at_ms, config_hash
         FROM bar_cursors
         WHERE symbol = ? AND timeframe = ?
         """
@@ -322,14 +396,15 @@ class DatabaseManager:
                 timeframe=row["timeframe"],
                 last_closed_bar_ts=row["last_closed_bar_ts"],
                 updated_at_ms=row["updated_at_ms"],
+                config_hash=row["config_hash"],
             )
 
     def advance_bar_cursor(self, cursor: BarCursorRecord) -> None:
         """Upsert bar cursor via INSERT OR REPLACE (restart-safe)."""
         query = """
         INSERT OR REPLACE INTO bar_cursors (
-            symbol, timeframe, last_closed_bar_ts, updated_at_ms
-        ) VALUES (?, ?, ?, ?)
+            symbol, timeframe, last_closed_bar_ts, updated_at_ms, config_hash
+        ) VALUES (?, ?, ?, ?, ?)
         """
         with self.get_connection() as conn:
             conn.execute(
@@ -339,6 +414,7 @@ class DatabaseManager:
                     cursor.timeframe,
                     cursor.last_closed_bar_ts,
                     cursor.updated_at_ms,
+                    cursor.config_hash,
                 ),
             )
 
@@ -348,8 +424,9 @@ class DatabaseManager:
         INSERT INTO signal_observations (
             signal_id, symbol, bar_ts, strategy_id, order_type, state,
             entry_px, sl_px, tp_px, lot_virtual,
-            partial_skipped_min_lot, r_realized_net, exit_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            partial_skipped_min_lot, r_realized_net, exit_reason,
+            origin, replay_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             with self.get_connection() as conn:
@@ -369,6 +446,8 @@ class DatabaseManager:
                         signal.partial_skipped_min_lot,
                         signal.r_realized_net,
                         signal.exit_reason,
+                        signal.origin,
+                        signal.replay_id,
                     ),
                 )
         except sqlite3.IntegrityError:
@@ -401,6 +480,68 @@ class DatabaseManager:
             changed = cursor.rowcount > 0
         return changed
 
+    @staticmethod
+    def _row_to_signal_observation(row: sqlite3.Row) -> SignalObservationRecord:
+        """Map a sqlite3.Row to a SignalObservationRecord domain dataclass."""
+        return SignalObservationRecord(
+            signal_id=row["signal_id"],
+            symbol=row["symbol"],
+            bar_ts=row["bar_ts"],
+            strategy_id=row["strategy_id"],
+            order_type=row["order_type"],
+            state=row["state"],
+            entry_px=row["entry_px"],
+            sl_px=row["sl_px"],
+            tp_px=row["tp_px"],
+            lot_virtual=row["lot_virtual"],
+            partial_skipped_min_lot=row["partial_skipped_min_lot"],
+            r_realized_net=row["r_realized_net"],
+            exit_reason=row["exit_reason"],
+            origin=row["origin"],
+            replay_id=row["replay_id"],
+        )
+
+    @staticmethod
+    def _row_to_blocked_signal(row: sqlite3.Row) -> BlockedSignalRecord:
+        """Map a sqlite3.Row to a BlockedSignalRecord domain dataclass."""
+        return BlockedSignalRecord(
+            id=row["id"],
+            timestamp_utc=row["timestamp_utc"],
+            pair=row["pair"],
+            direction=row["direction"],
+            strategy_selected=row["strategy_selected"],
+            reason_blocked=row["reason_blocked"],
+            confidence_at_time=row["confidence_at_time"],
+            would_be_entry_price=row["would_be_entry_price"],
+            current_spread=row["current_spread"],
+            details=row["details"],
+            origin=row["origin"],
+            replay_id=row["replay_id"],
+        )
+
+    @staticmethod
+    def _row_to_replay_run(row: sqlite3.Row) -> ReplayRunRecord:
+        """Map a sqlite3.Row to a ReplayRunRecord domain dataclass."""
+        return ReplayRunRecord(
+            replay_id=row["replay_id"],
+            symbol=row["symbol"],
+            timeframe=row["timeframe"],
+            last_cursor_ts=row["last_cursor_ts"],
+            first_missed_bar_ts=row["first_missed_bar_ts"],
+            last_missed_bar_ts=row["last_missed_bar_ts"],
+            missed_count=row["missed_count"],
+            started_at_utc=row["started_at_utc"],
+            finished_at_utc=row["finished_at_utc"],
+            status=row["status"],
+            replay_mode=row["replay_mode"],
+            config_hash=row["config_hash"],
+            strategy_id=row["strategy_id"],
+            model_id=row["model_id"],
+            observations_created=row["observations_created"],
+            blocked_created=row["blocked_created"],
+            error_text=row["error_text"],
+        )
+
     def get_open_signal_observations(
         self, symbol: str
     ) -> list[SignalObservationRecord]:
@@ -408,7 +549,7 @@ class DatabaseManager:
         query = """
         SELECT signal_id, symbol, bar_ts, strategy_id, order_type, state,
                entry_px, sl_px, tp_px, lot_virtual, partial_skipped_min_lot,
-               r_realized_net, exit_reason
+               r_realized_net, exit_reason, origin, replay_id
         FROM signal_observations
         WHERE symbol = ? AND state IN (?, ?, ?, ?)
         ORDER BY bar_ts ASC, signal_id ASC
@@ -418,24 +559,7 @@ class DatabaseManager:
                 query,
                 (symbol, "OPEN", "PARTIAL_SKIPPED_MIN_LOT", "RUNNING", "BE_ARMED"),
             ).fetchall()
-        return [
-            SignalObservationRecord(
-                signal_id=row["signal_id"],
-                symbol=row["symbol"],
-                bar_ts=row["bar_ts"],
-                strategy_id=row["strategy_id"],
-                order_type=row["order_type"],
-                state=row["state"],
-                entry_px=row["entry_px"],
-                sl_px=row["sl_px"],
-                tp_px=row["tp_px"],
-                lot_virtual=row["lot_virtual"],
-                partial_skipped_min_lot=row["partial_skipped_min_lot"],
-                r_realized_net=row["r_realized_net"],
-                exit_reason=row["exit_reason"],
-            )
-            for row in rows
-        ]
+        return [self._row_to_signal_observation(row) for row in rows]
 
     def insert_news_telemetry(self, telemetry: NewsTelemetryRecord) -> None:
         """Upsert news telemetry via INSERT OR REPLACE."""
@@ -463,3 +587,214 @@ class DatabaseManager:
                     telemetry.range_60m,
                 ),
             )
+
+    def create_replay_run(self, record: ReplayRunRecord) -> None:
+        """Insert a new replay run tracking record."""
+        query = """
+        INSERT INTO replay_runs (
+            replay_id, symbol, timeframe, last_cursor_ts,
+            first_missed_bar_ts, last_missed_bar_ts, missed_count,
+            started_at_utc, finished_at_utc, status, replay_mode,
+            config_hash, strategy_id, model_id, observations_created,
+            blocked_created, error_text
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                query,
+                (
+                    record.replay_id,
+                    record.symbol,
+                    record.timeframe,
+                    record.last_cursor_ts,
+                    record.first_missed_bar_ts,
+                    record.last_missed_bar_ts,
+                    record.missed_count,
+                    record.started_at_utc,
+                    record.finished_at_utc,
+                    record.status,
+                    record.replay_mode,
+                    record.config_hash,
+                    record.strategy_id,
+                    record.model_id,
+                    record.observations_created,
+                    record.blocked_created,
+                    record.error_text,
+                ),
+            )
+
+    def get_replay_run(self, replay_id: str) -> ReplayRunRecord | None:
+        """Retrieve a replay run by its ID."""
+        query = "SELECT * FROM replay_runs WHERE replay_id = ?"
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, (replay_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_replay_run(row)
+
+    def update_replay_run_status(
+        self,
+        replay_id: str,
+        status: ReplayStatus,
+        finished_at_utc: str | None = None,
+        error_text: str | None = None,
+        observations_created: int | None = None,
+        blocked_created: int | None = None,
+    ) -> None:
+        """Update replay run status, timestamp, metrics, and error text."""
+        clauses = ["status = ?"]
+        params: list[object] = [status]
+
+        if finished_at_utc is not None:
+            clauses.append("finished_at_utc = ?")
+            params.append(finished_at_utc)
+        if error_text is not None:
+            clauses.append("error_text = ?")
+            params.append(error_text)
+        if observations_created is not None:
+            clauses.append("observations_created = ?")
+            params.append(observations_created)
+        if blocked_created is not None:
+            clauses.append("blocked_created = ?")
+            params.append(blocked_created)
+
+        params.append(replay_id)
+        query = f"UPDATE replay_runs SET {', '.join(clauses)} WHERE replay_id = ?"
+        with self.get_connection() as conn:
+            conn.execute(query, params)
+
+    def list_replay_runs_by_status(
+        self, status: ReplayStatus
+    ) -> list[ReplayRunRecord]:
+        """List replay runs matching a given status in chronological order."""
+        query = """
+        SELECT * FROM replay_runs
+        WHERE status = ?
+        ORDER BY started_at_utc ASC, replay_id ASC
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute(query, (status,)).fetchall()
+            return [self._row_to_replay_run(r) for r in rows]
+
+    def insert_replay_observation(self, record: SignalObservationRecord) -> bool:
+        """Insert a replay observation with origin='REPLAY'; returns False on duplicate."""
+        query = """
+        INSERT INTO signal_observations (
+            signal_id, symbol, bar_ts, strategy_id, order_type, state,
+            entry_px, sl_px, tp_px, lot_virtual,
+            partial_skipped_min_lot, r_realized_net, exit_reason,
+            origin, replay_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    query,
+                    (
+                        record.signal_id,
+                        record.symbol,
+                        record.bar_ts,
+                        record.strategy_id,
+                        record.order_type,
+                        record.state,
+                        record.entry_px,
+                        record.sl_px,
+                        record.tp_px,
+                        record.lot_virtual,
+                        record.partial_skipped_min_lot,
+                        record.r_realized_net,
+                        record.exit_reason,
+                        "REPLAY",
+                        record.replay_id,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def insert_replay_blocked_signal(self, record: BlockedSignalRecord) -> bool:
+        """Insert a replay blocked signal with origin='REPLAY'; returns False on duplicate."""
+        query = """
+        INSERT INTO blocked_signals (
+            timestamp_utc, pair, direction, strategy_selected, reason_blocked,
+            confidence_at_time, would_be_entry_price, current_spread, details,
+            origin, replay_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    query,
+                    (
+                        record.timestamp_utc,
+                        record.pair,
+                        record.direction,
+                        record.strategy_selected,
+                        record.reason_blocked,
+                        record.confidence_at_time,
+                        record.would_be_entry_price,
+                        record.current_spread,
+                        record.details,
+                        "REPLAY",
+                        record.replay_id,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def get_observations_by_origin(
+        self, origin: RecordOrigin
+    ) -> list[SignalObservationRecord]:
+        """Retrieve signal observations filtered by origin ('LIVE' or 'REPLAY')."""
+        query = """
+        SELECT signal_id, symbol, bar_ts, strategy_id, order_type, state,
+               entry_px, sl_px, tp_px, lot_virtual, partial_skipped_min_lot,
+               r_realized_net, exit_reason, origin, replay_id
+        FROM signal_observations
+        WHERE origin = ?
+        ORDER BY bar_ts ASC, signal_id ASC
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute(query, (origin,)).fetchall()
+            return [self._row_to_signal_observation(row) for row in rows]
+
+    def get_blocked_signals_by_origin(
+        self, origin: RecordOrigin
+    ) -> list[BlockedSignalRecord]:
+        """Retrieve blocked signals filtered by origin ('LIVE' or 'REPLAY')."""
+        query = """
+        SELECT id, timestamp_utc, pair, direction, strategy_selected,
+               reason_blocked, confidence_at_time, would_be_entry_price,
+               current_spread, details, origin, replay_id
+        FROM blocked_signals
+        WHERE origin = ?
+        ORDER BY timestamp_utc ASC, id ASC
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute(query, (origin,)).fetchall()
+            return [self._row_to_blocked_signal(row) for row in rows]
+
+    def advance_bar_cursor_with_config_hash(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        last_closed_bar_ts: int,
+        config_hash: str,
+        updated_at_ms: int | None = None,
+    ) -> None:
+        """Advance bar cursor with config_hash fingerprint."""
+        now_ms = (
+            updated_at_ms
+            if updated_at_ms is not None
+            else int(time.time() * 1000)
+        )
+        cursor = BarCursorRecord(
+            symbol=symbol,
+            timeframe=timeframe,
+            last_closed_bar_ts=last_closed_bar_ts,
+            updated_at_ms=now_ms,
+            config_hash=config_hash,
+        )
+        self.advance_bar_cursor(cursor)
