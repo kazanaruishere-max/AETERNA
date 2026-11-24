@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,6 +40,11 @@ from engine.runtime.dashboard import SignalOnlyDashboard
 from engine.runtime.loop_a import FastTickLoopA
 from engine.runtime.loop_b import AnalysisLoopB
 from engine.runtime.news_sources import load_calendar_snapshot
+from engine.runtime.restart_replay import (
+    ReplaySummary,
+    RestartReplayConfig,
+    RestartReplayEngine,
+)
 from engine.runtime.runtime_service import RuntimeService
 from engine.runtime.virtual_tracker import VirtualSignalTracker
 from engine.shared.db.database import DatabaseManager
@@ -205,6 +211,78 @@ class _KronosRegimeMemoWrapper:
 
 
 # ---------------------------------------------------------------------------
+# Replay Gated Loops
+# ---------------------------------------------------------------------------
+
+
+class ReplayGatedLoopA(FastTickLoopA):
+    """FastTickLoopA wrapper ensuring Loop A does not bypass replay gating."""
+
+    def __init__(
+        self,
+        *args: Any,
+        replay_gate: asyncio.Event | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.replay_gate = replay_gate
+
+    async def run_forever(self, stop_event: asyncio.Event) -> None:
+        if self.replay_gate is not None:
+            while not stop_event.is_set() and not self.replay_gate.is_set():
+                await asyncio.sleep(0.05)
+            if stop_event.is_set():
+                return
+        await super().run_forever(stop_event)
+
+
+class ReplayGatedLoopB(AnalysisLoopB):
+    """AnalysisLoopB wrapper executing STRATEGY_ONLY replay recovery before live Loop B."""
+
+    def __init__(
+        self,
+        *args: Any,
+        replay_engine: RestartReplayEngine | None = None,
+        replay_gate: asyncio.Event | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.replay_engine = replay_engine
+        self.replay_gate = replay_gate
+        self.replay_summary: ReplaySummary | None = None
+
+    async def run_forever(
+        self, m15_event: asyncio.Event, stop_event: asyncio.Event
+    ) -> None:
+        if self.replay_engine is not None:
+            summary = await asyncio.to_thread(self.replay_engine.run_recovery)
+            self.replay_summary = summary
+            if summary.status in (
+                "BLOCKED",
+                "INTERRUPTED",
+                "GAP_TOO_LARGE",
+                "CONFIG_DRIFT",
+                "MISSING_CANDLES",
+                "NEGATIVE_GAP",
+            ):
+                logger.error(
+                    "LOOP_B_STARTUP_BLOCKED reason=%s error=%s",
+                    summary.status,
+                    summary.error_text,
+                )
+                stop_event.set()
+                raise RuntimeError(
+                    f"Loop B startup blocked by restart replay: status={summary.status}"
+                )
+            if self.replay_gate is not None:
+                self.replay_gate.set()
+        elif self.replay_gate is not None:
+            self.replay_gate.set()
+
+        await super().run_forever(m15_event, stop_event)
+
+
+# ---------------------------------------------------------------------------
 # RuntimeBundle
 # ---------------------------------------------------------------------------
 
@@ -223,6 +301,8 @@ class RuntimeBundle:
     news_filter: NewsCalendarFilter
     position_manager: PositionManager | None = None
     execution_enabled: bool = False
+    replay_engine: RestartReplayEngine | None = None
+    replay_summary: ReplaySummary | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -238,27 +318,32 @@ def _build_loops_and_tracker(
     effective_evaluator: StrategyEvaluator,
     symbol: str,
     poll_interval_seconds: float,
+    replay_engine: RestartReplayEngine | None = None,
+    replay_gate: asyncio.Event | None = None,
 ) -> tuple[FastTickLoopA, AnalysisLoopB, VirtualSignalTracker]:
     """Instantiate Loop A, Loop B, and VirtualSignalTracker with Kronos memo."""
     m15_event = asyncio.Event()
     kronos_memo = _KronosRegimeMemoWrapper(effective_kronos)
     logger.info("REGIME_SOURCE=KRONOS_MEMO")
 
-    loop_a = FastTickLoopA(
+    loop_a = ReplayGatedLoopA(
         exness_client=exness_client,
         state_machine=state_machine,
         db_manager=db_manager,
         m15_event=m15_event,
         symbol=symbol,
         poll_interval_seconds=poll_interval_seconds,
+        replay_gate=replay_gate,
     )
-    loop_b = AnalysisLoopB(
+    loop_b = ReplayGatedLoopB(
         exness_client=exness_client,
         kronos_engine=kronos_memo,
         strategy_evaluator=effective_evaluator,
         state_machine=state_machine,
         db_manager=db_manager,
         symbol=symbol,
+        replay_engine=replay_engine,
+        replay_gate=replay_gate,
     )
     tracker = VirtualSignalTracker(
         exness_client=exness_client,
@@ -291,6 +376,8 @@ def build_runtime_bundle(
     chart_candle_provider: Callable[[int], list[CandleDict]] | None = _DEFAULT_PROVIDER,
     position_manager: PositionManager | None = None,
     execution_enabled: bool = False,
+    replay_config: RestartReplayConfig | None = None,
+    replay_engine: RestartReplayEngine | None = None,
 ) -> RuntimeBundle:
     """Compose and return the immutable signal-only RuntimeBundle.
 
@@ -321,6 +408,23 @@ def build_runtime_bundle(
         else _VolatilityBreakoutAdapter()  # type: ignore[assignment]
     )
 
+    effective_replay_engine = replay_engine
+    if effective_replay_engine is None:
+        cfg = replay_config
+        if cfg is None and "RESTART_REPLAY_MODE" in os.environ:
+            cfg = RestartReplayConfig.from_env()
+        if cfg is not None:
+            effective_replay_engine = RestartReplayEngine(
+                exness_client=exness_client,
+                db_manager=db_manager,
+                kronos_engine=effective_kronos,
+                strategy_evaluator=effective_evaluator,
+                config=cfg,
+                symbol=symbol,
+            )
+
+    replay_gate = asyncio.Event() if effective_replay_engine is not None else None
+
     loop_a, loop_b, tracker = _build_loops_and_tracker(
         exness_client=exness_client,
         state_machine=state_machine,
@@ -329,6 +433,8 @@ def build_runtime_bundle(
         effective_evaluator=effective_evaluator,
         symbol=symbol,
         poll_interval_seconds=poll_interval_seconds,
+        replay_engine=effective_replay_engine,
+        replay_gate=replay_gate,
     )
 
     dashboard = SignalOnlyDashboard(
@@ -376,7 +482,17 @@ def build_runtime_bundle(
         news_filter=news_filter,
         position_manager=effective_position_manager,
         execution_enabled=execution_enabled,
+        replay_engine=effective_replay_engine,
     )
+
+
+def run_restart_recovery(
+    bundle: RuntimeBundle, now_utc: float | None = None
+) -> ReplaySummary | None:
+    """Manually invoke restart recovery on a bundle if replay_engine is configured."""
+    if bundle.replay_engine is not None:
+        return bundle.replay_engine.run_recovery(now_utc=now_utc)
+    return None
 
 
 # ---------------------------------------------------------------------------
